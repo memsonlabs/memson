@@ -1,3 +1,259 @@
+use serde_json::{Map};
+use std::collections::BTreeMap;
+use crate::json::{append, first, last, pop, pop_in, sum, JsonVal};
+
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    NotFound(String),
+    BadArg,
+    BadCmd,
+    BadType,
+    EmptySequence,
+    BadNumber,
+    BadKey,
+    UnknownCmd(String),
+    ParseCmd,
+}
+
+impl Error {
+    pub fn to_string(&self) -> String {
+        "error!".to_string()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Reply<'a> {
+    Val(JsonVal),
+    Ref(&'a JsonVal),
+    Update(JsonVal),
+    Insert(usize),
+}
+
+impl <'a> Reply<'a> {
+    pub fn to_string(&self) -> String {
+        match self {
+            Reply::Val(val) => val.to_string(),
+            Reply::Ref(val) => val.to_string(),
+            Reply::Update(_) => "Updated entry".to_string(),
+            Reply::Insert(_) => "Inserted entry".to_string()
+        }
+    }    
+}
+
+pub type Res<'a> = Result<Reply<'a>, Error>;
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Db {
+    data: BTreeMap<String, JsonVal>
+}
+
+impl Db {
+    pub fn new() -> Db {
+        Self::default()
+    }
+
+    pub fn insert<K: Into<String>, V: Into<JsonVal>>(&mut self, key: K, val: V) {
+        self.data.insert(key.into(),val.into());
+    }
+
+    pub fn eval(&mut self, cmd: &str) -> Res {
+        let cmd = match serde_json::from_str(cmd) {
+            Ok(cmd) => cmd,
+            Err(_) => return Err(Error::ParseCmd),
+        };
+        match cmd {
+            JsonVal::String(key) => {
+                match self.data.get(&key) {
+                    Some(val) => Ok(Reply::Ref(val)),
+                    None => Err(Error::NotFound(key)),
+                }
+            }
+            JsonVal::Object(obj) => self.eval_obj(obj),            
+            _ => Err(Error::BadCmd),
+        }
+    }
+
+    fn eval_obj(&mut self, obj: Map<String, JsonVal>) -> Res {
+        for (key, val) in obj.into_iter().take(1) {
+            return self.eval_cmd(key, val)
+        }
+        Err(Error::BadCmd)
+    }
+
+    fn eval_cmd(&mut self, key: String, val: JsonVal) -> Res {
+        match key.as_ref() {
+            "append" => self.eval_append(val),
+            "get" => self.eval_get(val),
+            "set" => self.eval_set(val),
+            "sum" => self.eval_sum(val),
+            "first" => self.eval_first(val),
+            "last" => self.eval_last(val),
+            "pop" => self.eval_pop(val),
+            _ => Err(Error::UnknownCmd(key)),
+        }
+    }
+
+    fn eval_pop(&mut self, arg: JsonVal) -> Res {
+        match arg {
+            JsonVal::String(key) => {
+                match self.data.get_mut(&key) {
+                    Some(val) => pop(val),
+                    None => Err(Error::EmptySequence),       
+                }                
+            }
+            _ => Err(Error::BadArg), 
+        }
+    }    
+
+    fn eval_sum(&mut self, arg: JsonVal) -> Res {
+        match arg {
+            JsonVal::String(key) => {
+                match self.get(key)? {
+                    Reply::Val(ref val) => sum(val).map(Reply::Val),
+                    Reply::Ref(val) => sum(val).map(Reply::Val),
+                    _ => Err(Error::BadArg)                  
+                }                
+            }
+            JsonVal::Object(obj) => {
+                let reply = self.eval_obj(obj)?;
+                match reply {
+                    Reply::Val(ref val) => sum(val).map(Reply::Val),
+                    Reply::Ref(val) => sum(val).map(Reply::Val),
+                    _ => Err(Error::BadCmd),
+                }
+            }
+            _ => unimplemented!(), 
+        }
+    }
+
+    fn eval_first<'a>(&'a mut self, arg: JsonVal) -> Res<'a> {
+        match arg {
+            JsonVal::String(key) => {
+                let r = self.data.get(&key);
+                match r {
+                    Some(val) => first(val),
+                    None => Err(Error::BadKey),                 
+                }                
+            }
+            _ => unimplemented!(), 
+        }
+    }
+
+    fn eval_last(&mut self, arg: JsonVal) -> Res {
+        match arg {
+            JsonVal::String(key) => {
+                let r = self.data.get(&key);
+                match r {
+                    Some(val) => last(val),
+                    None => Err(Error::BadKey),                 
+                }                
+            }
+            _ => unimplemented!(), 
+        }
+    }
+
+    fn eval_set(&mut self, arg: JsonVal) -> Res {
+        match arg {
+            JsonVal::Array(mut arr) => {
+                if arr.len() != 2 {
+                    return Err(Error::BadArg);
+                }
+                let val = arr.remove(1);
+                let key = arr.remove(0);                
+                self.put(key, val)
+            }
+            _ => unimplemented!(), 
+        }
+    }
+
+    fn put(&mut self, key: JsonVal, val: JsonVal) -> Res {        
+        match key {
+            JsonVal::String(key) => {
+                match self.data.insert(key, val) {
+                    Some(val) => Ok(Reply::Update(val)),
+                    None => Ok(Reply::Insert(1)),
+                }
+            }
+            _ =>  Err(Error::BadKey)
+        }
+    }
+
+    fn eval_append(&mut self, mut val: JsonVal) -> Res {
+        match val {
+            JsonVal::Array(ref mut arr) => {
+                if arr.len() != 2 {
+                    return Err(Error::BadCmd);
+                }
+                let elem = arr.remove(1);
+                let key = arr.remove(0);
+                let val = self.eval_get_mut(key)?;
+                append(val, elem)
+            }
+            ref mut val => {
+                *val = JsonVal::from(vec![val.clone()]); //TODO(optimize: remove clone)
+                Ok(Reply::Update(JsonVal::Null))
+            } 
+        }
+    }
+
+    fn eval_get(&mut self, val: JsonVal) -> Res {
+        match val {
+            JsonVal::String(key) => self.get(key),
+            _ => unimplemented!()
+        }
+    }
+
+    fn get<'a>(&'a self, key: String) -> Res<'a> {
+        match self.data.get(&key) {
+            Some(val) => Ok(Reply::Ref(val)),
+            None => Err(Error::NotFound(key.clone()))
+        }
+    }
+
+    fn eval_get_mut(&mut self, val: JsonVal) -> Result<&mut JsonVal, Error> {
+        match val {
+            JsonVal::String(key) => self.data.get_mut(&key).ok_or(Error::NotFound(key)),
+            _ => Err(Error::BadKey),
+        }
+    }
+}
+
+fn wrap<'a>(res: Option<&'a JsonVal>) -> Res<'a> {
+    match res {
+        Some(val) => Ok(Reply::Ref(val)),
+        None => Err(Error::EmptySequence),
+    }
+}
+
+
+#[test]
+fn eval_get_string_ok<'a>() {
+    let mut db = Db::default();
+    let vec = vec![1,2,3,4,5];
+    db.insert("a", vec.clone());
+    let val = JsonVal::from(vec);
+    let exp = Reply::Ref(&val);
+    assert_eq!(Ok(exp), db.eval("a"));
+} 
+
+#[test]
+fn eval_get_string_err_not_found<'a>() {
+    let mut db = Db::default();
+    db.insert("a".to_string(), JsonVal::from(1));
+    assert_eq!(Err(Error::NotFound("b".to_string())), db.eval("b"));
+} 
+
+#[test]
+fn eval_append_ok() {
+    let mut db = Db::default();
+    let vec =vec![1,2,3,4,5];
+    db.insert("a", vec.clone());
+    let val = JsonVal::from(vec);
+    let exp = Reply::Ref(&val);
+    assert_eq!(Ok(exp), db.eval("a"));
+} 
+
+/*
 use crate::json::*;
 use crate::replay::*;
 use serde_json::Value as JsonVal;
@@ -476,3 +732,6 @@ mod tests {
         assert_eq!(bad_type(), db.eval(div(get("s"), get("i"))));        
     }
 }
+*/
+
+

@@ -1,178 +1,109 @@
-use serde_json::{Map};
-use std::collections::BTreeMap;
-use std::io;
-use json::JsonVal;
-
+mod codec;
+mod db;
 mod json;
+mod server;
+mod session;
 
-#[derive(Debug, PartialEq)]
-pub enum Error {
-    NotFound(String),
-    BadCmd,
-    BadType,
-    EmptySequence,
-    BadNumber,
-}
+use db::{Db, Reply};
+use server::MemsonServer;
+use codec::MemsonCodec;
+use session::MemsonSession;
+use std::io;
+use std::io::Write;
+use std::net;
+use std::str::FromStr;
 
-#[derive(Debug, PartialEq)]
-pub enum Reply<'a> {
-    Val(JsonVal),
-    Ref(&'a JsonVal),
-}
+use actix::prelude::*;
+use futures_util::stream::StreamExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_util::codec::FramedRead;
 
-pub type Res<'a> = Result<Reply<'a>, Error>;
-
-#[derive(Debug, Default, PartialEq)]
-struct Db {
-    data: BTreeMap<String, JsonVal>
-}
-
-impl Db {
-    fn new() -> Db {
-        Self::default()
-    }
-
-    fn insert<K: Into<String>, V: Into<JsonVal>>(&mut self, key: K, val: V) {
-        self.data.insert(key.into(),val.into());
-    }
-
-    fn eval<V: Into<JsonVal>>(&mut self, cmd: V) -> Res {
-        match cmd.into() {
-            JsonVal::String(key) => {
-                match self.data.get(&key) {
-                    Some(val) => Ok(Reply::Ref(val)),
-                    None => Err(Error::NotFound(key)),
-                }
-            }
-            JsonVal::Null => {
-                unimplemented!()
-            }
-            JsonVal::Bool(_) => {
-                unimplemented!()
-            }
-            JsonVal::Number(_) => {
-                unimplemented!()
-            }
-            JsonVal::Array(_) => {
-                unimplemented!()
-            }
-            JsonVal::Object(obj) => self.eval_obj(obj),            
-        }
-    }
-
-    fn eval_obj(&mut self, obj: Map<String, JsonVal>) -> Res {
-        for (key, val) in obj.into_iter().take(1) {
-            return self.eval_cmd(key, val)
-        }
-        Err(Error::BadCmd)
-    }
-
-    fn eval_cmd(&mut self, key: String, val: JsonVal) -> Res {
-        match key.as_ref() {
-            "append" => self.eval_append(val),
-            "get" => self.eval_get(val),
-            "sum" => self.eval_sum(val),
-            _ => unimplemented!()
-        }
-    }
-
-    fn eval_sum(&mut self, mut arg: JsonVal) -> Res {
-        match arg {
-            JsonVal::String(key) => {
-                match self.get(key)? {
-                    Reply::Val(ref val) => json::sum(val).map(Reply::Val),
-                    Reply::Ref(val) => json::sum(val).map(Reply::Val),                    
-                }                
-            }
-            _ => unimplemented!(), 
-        }
-    }
-
-    fn eval_append(&mut self, mut val: JsonVal) -> Res {
-        match val {
-            JsonVal::Array(ref mut arr) => {
-                if arr.len() != 2 {
-                    return Err(Error::BadCmd);
-                }
-                let elem = arr.remove(1);
-                let key = arr.remove(0).to_string();
-                let val = self.get_mut(key)?;
-                append(val, elem).map(|_| Reply::Val(JsonVal::Null))
-            }
-            _ => unimplemented!(), 
-        }
-    }
-
-    fn eval_get(&mut self, val: JsonVal) -> Res {
-        match val {
-            JsonVal::String(key) => self.get(key),
-            _ => unimplemented!()
-        }
-    }
-
-    fn get(&self, key: String) -> Res {
-        match self.data.get(&key) {
-            Some(val) => Ok(Reply::Ref(val)),
-            None => Err(Error::NotFound(key.clone()))
-        }
-    }
-
-    fn get_mut(&mut self, key: String) -> Result<&mut JsonVal, Error> {
-        self.data.get_mut(&key).ok_or(Error::NotFound(key))
-    }
-}
-
-fn append(val: &mut JsonVal, elem: JsonVal) -> Result<(), Error> {
-    match val {
-        JsonVal::Array(ref mut arr) => arr.push(elem),
-        _ => unimplemented!(),
-    };
-    Ok(())
-}
-
-fn main() {
+fn start_local_db() {
     let mut db = Db::new();
-    loop {
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(_) => {                
-                println!("cmd = {}", input);
-            }
-            Err(error) => {
-                println!("error: {}", error);
-                continue
-            }
+    let mut input = String::new();
+    db.eval("{\"set\":[\"a\",[1,2,3,4,5]]}").unwrap();
+    db.eval("{\"set\": [\"b\", {\"name\":\"james\"}]}").unwrap();
+    loop {        
+        print!("> ");
+        io::stdout().flush().unwrap();
+        if let Err(err) = io::stdin().read_line(&mut input) {
+            println!("error: {}", err);
+            continue;
         }
-        let val = db.eval(input);
-        println!("val = {:?}", val);
-    }
-    
+        if input.is_empty() {
+            continue;
+        }
+        match db.eval(&input) {
+            Ok(Reply::Ref(val)) => println!("{}", val),
+            Ok(Reply::Val(val)) => println!("{}", val),
+            Ok(Reply::Insert(n)) => println!("inserted {} entry", n),
+            Ok(Reply::Update(_)) => println!("updated 1 entry"),
+            Err(err) => println!("error: {:?}", err),
+        };    
+        input.clear();
+    }    
 }
 
-#[test]
-fn eval_get_string_ok<'a>() {
-    let mut db = Db::default();
-    let vec = vec![1,2,3,4,5];
-    db.insert("a", vec.clone());
-    let val = JsonVal::from(vec);
-    let exp = Reply::Ref(&val);
-    assert_eq!(Ok(exp), db.eval("a"));
-} 
+/// Define tcp server that will accept incoming tcp connection and create
+/// chat actors.
+struct Server {
+    db: Addr<MemsonServer>,
+}
 
-#[test]
-fn eval_get_string_err_not_found<'a>() {
-    let mut db = Db::default();
-    db.insert("a".to_string(), JsonVal::from(1));
-    assert_eq!(Err(Error::NotFound("b".to_string())), db.eval("b"));
-} 
+/// Make actor from `Server`
+impl Actor for Server {
+    /// Every actor has to provide execution `Context` in which it can run.
+    type Context = Context<Self>;
+}
 
-#[test]
-fn eval_append_ok() {
-    let mut db = Db::default();
-    let vec =vec![1,2,3,4,5];
-    db.insert("a", vec.clone());
-    let val = JsonVal::from(vec);
-    let exp = Reply::Ref(&val);
-    assert_eq!(Ok(exp), db.eval("a"));
-} 
+#[derive(Message)]
+#[rtype(result = "()")]
+struct TcpConnect(pub TcpStream, pub net::SocketAddr);
 
+/// Handle stream of TcpStream's
+impl Handler<TcpConnect> for Server {
+    /// this is response for message, which is defined by `ResponseType` trait
+    /// in this case we just return unit.
+    type Result = ();
+
+    fn handle(&mut self, msg: TcpConnect, _: &mut Context<Self>) {
+        // For each incoming connection we create `ChatSession` actor
+        // with out chat server address.
+        let server = self.db.clone();
+        MemsonSession::create(move |ctx| {
+            let (r, w) = tokio::io::split(msg.0);
+            MemsonSession::add_stream(FramedRead::new(r, MemsonCodec), ctx);
+            MemsonSession::new(server, actix::io::FramedWrite::new(w, MemsonCodec, ctx))
+        });
+    }
+}
+
+#[actix_rt::main]
+async fn main() {
+    // Start Memson server actor
+    let server = MemsonServer::default().start();
+
+    // Create server listener
+    let addr = net::SocketAddr::from_str("127.0.0.1:8888").unwrap();
+    let listener = Box::new(TcpListener::bind(&addr).await.unwrap());
+
+    // Our Memson server `Server` is an actor, first we need to start it
+    // and then add stream on incoming tcp connections to it.
+    // TcpListener::incoming() returns stream of the (TcpStream, net::SocketAddr)
+    // items So to be able to handle this events `Server` actor has to implement
+    // stream handler `StreamHandler<(TcpStream, net::SocketAddr), io::Error>`
+    Server::create(move |ctx| {
+        ctx.add_message_stream(Box::leak(listener).incoming().map(|st| {
+            let st = st.unwrap();
+            let addr = st.peer_addr().unwrap();
+            TcpConnect(st, addr)
+        }));
+        Server { db: server }
+    });
+
+    println!("Running Memson server on 127.0.0.1:8888");
+
+    tokio::signal::ctrl_c().await.unwrap();
+    println!("Ctrl-C received, shutting down");
+    System::current().stop();
+}
