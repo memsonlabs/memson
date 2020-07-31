@@ -1,116 +1,203 @@
-//! `MemsonServer` is an actor. It maintains list of connection client session.
-//! And manages available rooms. Peers send messages to other peers in same
-//! room through `MemsonServer`.
+//! A "tiny database" and accompanying protocol
+//!
+//! This example shows the usage of shared state amongst all connected clients,
+//! namely a database of key/value pairs. Each connected client can send a
+//! series of GET/SET commands to query the current value of a key or set the
+//! value of a key.
+//!
+//! This example has a simple protocol you can use to interact with the server.
+//! To run, first run this in one terminal window:
+//!
+//!     cargo run --example tinydb
+//!
+//! and next in another windows run:
+//!
+//!     cargo run --example connect 127.0.0.1:8080
+//!
+//! In the `connect` window you can type in commands where when you hit enter
+//! you'll get a response from the server for that command. An example session
+//! is:
+//!
+//!
+//!     $ cargo run --example connect 127.0.0.1:8080
+//!     GET foo
+//!     foo = bar
+//!     GET FOOBAR
+//!     error: no key FOOBAR
+//!     SET FOOBAR my awesome string
+//!     set FOOBAR = `my awesome string`, previous: None
+//!     SET foo tokio
+//!     set foo = `tokio`, previous: Some("bar")
+//!     GET foo
+//!     foo = tokio
+//!
+//! Namely you can issue two forms of commands:
+//!
+//! * `GET $key` - this will fetch the value of `$key` from the database and
+//!   return it. The server's database is initially populated with the key `foo`
+//!   set to the value `bar`
+//! * `SET $key $value` - this will set the value of `$key` to `$value`,
+//!   returning the previous value, if any.
 
-use actix::prelude::*;
-use rand::{self, Rng};
+#![warn(rust_2018_idioms)]
+
+use tokio::net::TcpListener;
+use tokio::stream::StreamExt;
+use tokio_util::codec::{Framed, LinesCodec};
+
+use futures::SinkExt;
 use std::collections::HashMap;
-use serde_json::Value as Json;
-use actix_derive::{Message, MessageResponse};
-
+use std::env;
+use std::error::Error;
+use std::sync::{Arc, RwLock};
 use crate::db::Db;
-use crate::session;
 
-/// Message for Memson server communications
-#[derive(Message)]
-#[rtype(result = "usize")]
-/// New Memson session is created
-pub struct Connect {
-    pub addr: Addr<session::MemsonSession>,
+/// The in-memory database shared amongst all clients.
+///
+/// This database will be shared via `Arc`, so to mutate the internal map we're
+/// going to use a `Mutex` for interior mutability.
+pub struct DbServer {
+    map: RwLock<Db>,
 }
 
-/// Session is disconnected
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct Disconnect {
-    pub id: usize,
-}
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // Parse the address we're going to run this server on
+    // and set up our TCP listener to accept connections.
+    let addr = env::args()
+        .nth(1)
+        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
-#[derive(Message)]
-#[rtype(result = "()")]
-/// Send message to specific room
-pub struct Query {
-    /// Id of the client session
-    pub id: usize,
-    /// Peer message
-    pub cmd: String,
-}
+    let mut listener = TcpListener::bind(&addr).await?;
+    println!("Listening on: {}", addr);
 
-/// `MemsonServer` manages Memson rooms and responsible for coordinating Memson
-/// session. implementation is super primitive
-pub struct MemsonServer {
-    sessions: HashMap<usize, Addr<session::MemsonSession>>,
-    db: Db,
-}
+    // Create the shared state of this server that will be shared amongst all
+    // clients. We populate the initial database and then create the `Database`
+    // structure. Note the usage of `Arc` here which will be used to ensure that
+    // each independently spawned client will have a reference to the in-memory
+    // database.
+    let mut initial_db = HashMap::new();
+    initial_db.insert("foo".to_string(), "bar".to_string());
+    let db = Arc::new(Database {
+        map: Mutex::new(initial_db),
+    });
 
-impl Default for MemsonServer {
-    fn default() -> MemsonServer {
-        let mut db = Db::new();
-        db.insert("a", Json::from(1));
-        MemsonServer {
-            db,
-            sessions: HashMap::new(),
+    loop {
+        match listener.accept().await {
+            Ok((socket, _)) => {
+                // After getting a new connection first we see a clone of the database
+                // being created, which is creating a new reference for this connected
+                // client to use.
+                let db = db.clone();
+
+                // Like with other small servers, we'll `spawn` this client to ensure it
+                // runs concurrently with all other clients. The `move` keyword is used
+                // here to move ownership of our db handle into the async closure.
+                tokio::spawn(async move {
+                    // Since our protocol is line-based we use `tokio_codecs`'s `LineCodec`
+                    // to convert our stream of bytes, `socket`, into a `Stream` of lines
+                    // as well as convert our line based responses into a stream of bytes.
+                    let mut lines = Framed::new(socket, LinesCodec::new());
+
+                    // Here for every line we get back from the `Framed` decoder,
+                    // we parse the request, and if it's valid we generate a response
+                    // based on the values in the database.
+                    while let Some(result) = lines.next().await {
+                        match result {
+                            Ok(line) => {
+                                let response = handle_request(&line, &db);
+
+                                let response = response.serialize();
+
+                                if let Err(e) = lines.send(response.as_str()).await {
+                                    println!("error on sending response; error = {:?}", e);
+                                }
+                            }
+                            Err(e) => {
+                                println!("error on decoding from socket; error = {:?}", e);
+                            }
+                        }
+                    }
+
+                    // The connection will be closed at this point as `lines.next()` has returned `None`.
+                });
+            }
+            Err(e) => println!("error accepting socket; error = {:?}", e),
         }
     }
 }
 
-impl MemsonServer {
-    fn eval_cmd(&mut self, qry: &Query) {
-        let r = self.db.eval(qry.cmd.as_ref());
-        println!("r = {:?}", r);
-        let s= match r {
-            Ok(data) => data.to_string(),
-            Err(err) => err.to_string(),
-        };
+fn handle_request(line: &str, db: &Arc<Database>) -> Response {
+    let request = match Request::parse(&line) {
+        Ok(req) => req,
+        Err(e) => return Response::Error { msg: e },
+    };
 
-        let addr = self.sessions.get(&qry.id).unwrap();
-        let r = addr.send(session::Message(s)).await.unwrap();
-        println!("{:?}", r);
+    let mut db = db.map.lock().unwrap();
+    match request {
+        Request::Get { key } => match db.get(&key) {
+            Some(value) => Response::Value {
+                key,
+                value: value.clone(),
+            },
+            None => Response::Error {
+                msg: format!("no key {}", key),
+            },
+        },
+        Request::Set { key, value } => {
+            let previous = db.insert(key.clone(), value.clone());
+            Response::Set {
+                key,
+                value,
+                previous,
+            }
+        }
     }
 }
 
-/// Make actor from `MemsonServer`
-impl Actor for MemsonServer {
-    /// We are going to use simple Context, we just need ability to communicate
-    /// with other actors.
-    type Context = Context<Self>;
-}
-
-/// Handler for Connect message.
-///
-/// Register new session and assign unique id to this session
-impl Handler<Connect> for MemsonServer {
-    type Result = usize;
-
-    fn handle(&mut self, msg: Connect, _: &mut Context<Self>) -> Self::Result {
-        println!("Someone connected");
-
-        // register session with random id
-        let id = rand::thread_rng().gen::<usize>();
-        self.sessions.insert(id, msg.addr);
-
-        // send id back
-        id
+impl Request {
+    fn parse(input: &str) -> Result<Request, String> {
+        let mut parts = input.splitn(3, ' ');
+        match parts.next() {
+            Some("GET") => {
+                let key = parts.next().ok_or("GET must be followed by a key")?;
+                if parts.next().is_some() {
+                    return Err("GET's key must not be followed by anything".into());
+                }
+                Ok(Request::Get {
+                    key: key.to_string(),
+                })
+            }
+            Some("SET") => {
+                let key = match parts.next() {
+                    Some(key) => key,
+                    None => return Err("SET must be followed by a key".into()),
+                };
+                let value = match parts.next() {
+                    Some(value) => value,
+                    None => return Err("SET needs a value".into()),
+                };
+                Ok(Request::Set {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                })
+            }
+            Some(cmd) => Err(format!("unknown command: {}", cmd)),
+            None => Err("empty input".into()),
+        }
     }
 }
 
-/// Handler for Disconnect message.
-impl Handler<Disconnect> for MemsonServer {
-    type Result = ();
-
-    fn handle(&mut self, msg: Disconnect, _: &mut Context<Self>) {
-        println!("Someone disconnected");        
-    }
-}
-
-/// Handler for Message message.
-impl Handler<Query> for MemsonServer {
-    type Result = ();
-
-    fn handle(&mut self, qry: Query, _: &mut Context<Self>)  {
-        println!("query handler = {}", qry.cmd);
-        self.eval_cmd(&qry)
-        
-        //self.send_message(&msg.room, msg.msg.as_str(), msg.id);
+impl Response {
+    fn serialize(&self) -> String {
+        match *self {
+            Response::Value { ref key, ref value } => format!("{} = {}", key, value),
+            Response::Set {
+                ref key,
+                ref value,
+                ref previous,
+            } => format!("set {} = `{}`, previous: {:?}", key, value, previous),
+            Response::Error { ref msg } => format!("error: {}", msg),
+        }
     }
 }
