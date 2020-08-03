@@ -3,21 +3,8 @@
 use serde_json::Number as JsonNum;
 use serde_json::Number;
 pub use serde_json::{Map, Value as Json};
+use std::mem;
 use crate::db::{Error, Reply, Res};
-
-/*
-const BAD_TYPE: &str = "bad type";
-
-const BAD_WRITE: &str = "bad write";
-
-const BAD_KEY: &str = "bad key";
-
-const BAD_IO: &str = "bad io";
-
-const BAD_JSON: &str = "bad json";
-
-const Error::BadType: &str = "bad number";
-*/
 
 pub fn len(val: &Json) -> Json {
     match val {
@@ -26,17 +13,28 @@ pub fn len(val: &Json) -> Json {
     }
 }
 
-pub fn append(val: &mut Json, elem: Json) -> Res<'_> {
+pub fn append(val: &mut Json, elem: Json) {
     match val {
         Json::Array(ref mut arr) => {
             arr.push(elem);            
+        }
+        Json::Object(ref mut obj) => {
+            match elem {
+                Json::Object(o) => {
+                    obj.extend(o);
+                }
+                _json => {
+                    let mut elem = Json::Array(Vec::new());
+                    mem::swap(&mut elem, val);
+                    append(val, elem);
+                }
+            }
         }
         val => {
             let arr = vec![val.clone(), elem];
             *val = Json::from(arr);
         }
-    };
-    Ok(Reply::Update)
+    }
 }
 
 pub fn first(val: &Json) -> Res<'_> {
@@ -736,3 +734,12 @@ fn eval_min(arg: Cmd, db: &mut Database) -> Res {
 }
 
 */
+
+#[test]
+fn append_obj_ok() {
+    use serde_json::json;
+    let mut obj = json!({"name":"james"});
+    let elem = json!({"age": 45});
+    append(&mut obj, elem);
+    assert_eq!(obj, json!({"name": "james", "age": 45}));
+}

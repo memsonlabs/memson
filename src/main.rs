@@ -46,7 +46,6 @@ use tokio::stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
 use futures::SinkExt;
-use serde_json::Value as Json;
 use std::env;
 use std::error::Error;
 use std::sync::{Arc, RwLock};
@@ -86,8 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // structure. Note the usage of `Arc` here which will be used to ensure that
     // each independently spawned client will have a reference to the in-memory
     // database.
-    let mut initial_db = Db::new();
-    initial_db.insert("foo".to_string(), Json::from("bar".to_string()));
+    let initial_db = Db::open("prod.memson").unwrap();
     let db = Arc::new(DbServer {
         db: RwLock::new(initial_db),
     });

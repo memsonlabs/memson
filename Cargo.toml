@@ -12,3 +12,6 @@ serde = { version = "1.0", features = ["derive"] }
 sled = "*"
 tokio = { version = "0.2", features = ["full"] }
 tokio-util = { version = "0.3", features = ["codec"] }
+
+[dev-dependencies]
+assert_approx_eq = "*"
