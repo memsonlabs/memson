@@ -323,6 +323,7 @@ mod tests {
 
     use assert_approx_eq::assert_approx_eq;
     use lazy_static::lazy_static;
+    use serde_json::json;
     use std::sync::RwLock;
 
     lazy_static! {
@@ -763,5 +764,15 @@ mod tests {
     #[test]
     fn eval_get_string_err_not_found() {
         assert_eq!(Err(Error::UnknownKey("ania".to_string())), get("ania"));
+    }
+
+    #[test]
+    fn eval_append_obj() {
+        set("anna", json!({"name":"anna", "age": 28})).unwrap();
+        append("anna", json!({"email": "anna@gmail.com"})).unwrap();
+        assert_eq!(
+            Ok(json!({"name":"anna", "age": 28, "email": "anna@gmail.com"})),
+            get("anna")
+        );
     }
 }
