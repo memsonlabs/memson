@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn open_db() {
-        assert_eq!(10, len());
+        assert_eq!(11, len());
         assert_eq!(get("b"), Ok(Json::Bool(true)));
         assert_eq!(
             get("ia"),
