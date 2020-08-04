@@ -68,6 +68,7 @@ impl Cmd {
 pub enum Error {
     BadType,
     BadState,
+    BadIO,
     EmptySequence,
     BadNumber,
     UnknownKey(String),
@@ -78,6 +79,7 @@ impl Error {
         let msg = match self {
             Error::BadType => "incorrect type",
             Error::BadState => "incorrect internal state",
+            Error::BadIO => "bad i/o",
             Error::EmptySequence => "empty sequence",
             Error::BadNumber => "bad number",
             Error::UnknownKey(_) => "unknown key",
@@ -116,14 +118,38 @@ pub struct Db {
 impl Db {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Db, Error> {
         let store = sled::open(path).expect("cannot open db");
-        Ok(Self {
-            cache: BTreeMap::new(),
-            store,
-        })
+        let mut cache = BTreeMap::new();
+        println!("len = {:?}", store.len());
+        for r in store.iter() {
+            match r {
+                Ok((key, val)) => {
+                    let key: String = unsafe { String::from_utf8_unchecked(key.to_vec()) };
+                    println!("key = {:?}", key);
+                    let val: Json = match serde_json::from_slice(&val) {
+                        Ok(val) => val,
+                        Err(_) => return Err(Error::BadIO),
+                    };
+                    println!("val = {:?}", val);
+                    cache.insert(key, val);
+                }
+                Err(_) => return Err(Error::BadIO),
+            }
+        }
+        Ok(Self { cache, store })
     }
 
-    pub fn insert<K: Into<String>, V: Into<Json>>(&mut self, key: K, val: V) {
-        self.cache.insert(key.into(), val.into());
+    pub fn insert<K: Into<String>, V: Into<Json>>(&mut self, key: K, val: V) -> Result<(), Error> {
+        let key = key.into();
+        let val = val.into();
+        if let Err(_) = self.store.insert(&key, val.to_string().as_bytes()) {
+            return Err(Error::BadIO);
+        }
+        self.cache.insert(key, val);
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.cache.len()
     }
 
     fn eval_append(&mut self, key: String, arg: Json) -> Res<'_> {
@@ -227,6 +253,17 @@ impl Db {
     }
 
     fn eval_set(&mut self, key: String, val: Json) -> Res<'_> {
+        let vec = match serde_json::to_vec(&val) {
+            Ok(vec) => vec,
+            Err(_) => return Err(Error::BadIO),
+        };
+        if let Err(_) = self.store.insert(&key, vec) {
+            return Err(Error::BadIO);
+        }
+        match self.store.flush() {
+            Ok(n) => println!("written {} bytes to disk", n),
+            Err(_) => return Err(Error::BadIO),
+        };
         let reply = if let Some(_) = self.cache.insert(key, val) {
             Reply::Update
         } else {
@@ -285,72 +322,56 @@ mod tests {
     use super::*;
 
     use assert_approx_eq::assert_approx_eq;
+    use lazy_static::lazy_static;
+    use std::sync::RwLock;
+
+    lazy_static! {
+        static ref DB: RwLock<Db> = {
+            let mut db = Db::open("test").unwrap();
+            db.insert(
+                "a",
+                Json::from(vec![
+                    Json::from(1),
+                    Json::from(2),
+                    Json::from(3),
+                    Json::from(4),
+                    Json::from(5),
+                ]),
+            )
+            .unwrap();
+            db.insert("b", true).unwrap();
+            db.insert("i", 2).unwrap();
+            db.insert("f", 3.3).unwrap();
+            db.insert(
+                "ia",
+                Json::from(
+                    vec![1, 2, 3, 4, 5]
+                        .into_iter()
+                        .map(Json::from)
+                        .collect::<Vec<Json>>(),
+                ),
+            )
+            .unwrap();
+            db.insert("fa", Json::from(vec![1.1, 2.2, 3.3, 4.4, 5.5]))
+                .unwrap();
+            db.insert("x", 4).unwrap();
+            db.insert("y", 5).unwrap();
+            db.insert("s", "hello").unwrap();
+            db.insert(
+                "sa",
+                Json::from(vec![
+                    Json::from("a"),
+                    Json::from("b"),
+                    Json::from("c"),
+                    Json::from("d"),
+                ]),
+            )
+            .unwrap();
+            RwLock::new(db)
+        };
+    }
 
     type Res = Result<Json, Error>;
-
-    fn add<S: Into<String>>(x: S, y: S) -> String {
-        "{\"+\":[".to_string() + &x.into() + "," + &y.into() + "]}"
-    }
-
-    fn sub<S: Into<String>>(x: S, y: S) -> String {
-        "{\"-\":[".to_string() + &x.into() + "," + &y.into() + "]}"
-    }
-
-    fn mul<S: Into<String>>(x: S, y: S) -> String {
-        "{\"*\":[".to_string() + &x.into() + "," + &y.into() + "]}"
-    }
-
-    fn div<S: Into<String>>(x: S, y: S) -> String {
-        "{\"/\":[".to_string() + &x.into() + "," + &y.into() + "]}"
-    }
-
-    fn get<S: Into<String>>(arg: S) -> String {
-        "{\"get\":".to_string() + "\"" + &arg.into() + "\"" + "}"
-    }
-
-    fn first<S: Into<String>>(arg: S) -> String {
-        json_fn("first", arg)
-    }
-
-    fn last<S: Into<String>>(arg: S) -> String {
-        json_fn("last", arg)
-    }
-
-    fn max<S: Into<String>>(arg: S) -> String {
-        json_fn("max", arg)
-    }
-
-    fn min<S: Into<String>>(arg: S) -> String {
-        json_fn("min", arg)
-    }
-
-    fn avg<S: Into<String>>(arg: S) -> String {
-        json_fn("avg", arg)
-    }
-
-    fn var<S: Into<String>>(arg: S) -> String {
-        json_fn("var", arg)
-    }
-
-    fn dev<S: Into<String>>(arg: S) -> String {
-        json_fn("dev", arg)
-    }
-
-    fn json_fn<S: Into<String>>(f: &str, arg: S) -> String {
-        "{\"".to_string() + f + "\":" + &arg.into() + "}"
-    }
-
-    fn test_db() -> Db {
-        Db::open("test.memson").unwrap()
-    }
-
-    fn json_f64_reply<'a>(v: &Reply<'_>) -> f64 {
-        match v {
-            Reply::Val(ref val) => json_f64(val),
-            Reply::Ref(ref val) => json_f64(val),
-            _ => panic!("bad state"), 
-        }
-    }
 
     fn json_f64(v: &Json) -> f64 {
         v.as_f64().unwrap()
@@ -360,65 +381,79 @@ mod tests {
         match r {
             Reply::Val(val) => val.clone(),
             Reply::Ref(val) => val.clone(),
-            _ => panic!("bad state"),
+            _ => Json::from("bad state"),
         }
     }
 
-    fn eval_read(db: &Db, cmd: Cmd) -> Res {
+    fn eval_read(cmd: Cmd) -> Res {
+        let db = DB.read().unwrap();
         db.eval_read_cmd(cmd).map(json_val)
     }
 
-    fn eval_write(db: &mut Db, cmd: Cmd) -> Res {
+    fn eval_write(cmd: Cmd) -> Res {
+        let mut db = DB.write().unwrap();
         db.eval_write_cmd(cmd).map(json_val)
     }
 
-    fn db_get<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::Get(key.into()))
+    fn get<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::Get(key.into()))
     }
 
-    fn db_first<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::First(key.into()))
+    fn first<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::First(key.into()))
     }
 
-    fn db_last<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::Last(key.into()))
+    fn last<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::Last(key.into()))
     }
 
-    fn db_max<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::Max(key.into()))
+    fn max<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::Max(key.into()))
     }
 
-    fn db_min<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::Min(key.into()))
+    fn min<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::Min(key.into()))
     }
 
-    fn db_var<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::Var(key.into()))
+    fn var<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::Var(key.into()))
     }
 
-    fn db_dev<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::Dev(key.into()))
+    fn dev<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::Dev(key.into()))
     }
 
-    fn db_avg<S: Into<String>>(db: &Db, key: S) -> Res {
-        eval_read(db, Cmd::Avg(key.into()))
+    fn avg<S: Into<String>>(key: S) -> Res {
+        eval_read(Cmd::Avg(key.into()))
     }
 
-    fn db_div<S: Into<String>>(db: &Db, lhs: S, rhs: S) -> Res {
-        eval_read(db, Cmd::Div(lhs.into(), rhs.into()))
+    fn div<S: Into<String>>(lhs: S, rhs: S) -> Res {
+        eval_read(Cmd::Div(lhs.into(), rhs.into()))
     }
 
-    fn db_mul<S: Into<String>>(db: &Db, lhs: S, rhs: S) -> Res {
-        eval_read(db, Cmd::Mul(lhs.into(), rhs.into()))
-    }  
-    
-    fn db_add<S: Into<String>>(db: &Db, lhs: S, rhs: S) -> Res {
-        eval_read(db, Cmd::Add(lhs.into(), rhs.into()))
-    } 
-    
-    fn db_sub<S: Into<String>>(db: &Db, lhs: S, rhs: S) -> Res {
-        eval_read(db, Cmd::Sub(lhs.into(), rhs.into()))
-    }     
+    fn mul<S: Into<String>>(lhs: S, rhs: S) -> Res {
+        eval_read(Cmd::Mul(lhs.into(), rhs.into()))
+    }
+    fn add<S: Into<String>>(lhs: S, rhs: S) -> Res {
+        eval_read(Cmd::Add(lhs.into(), rhs.into()))
+    }
+    fn sub<S: Into<String>>(lhs: S, rhs: S) -> Res {
+        eval_read(Cmd::Sub(lhs.into(), rhs.into()))
+    }
+    fn len() -> usize {
+        let db = DB.read().unwrap();
+        db.len()
+    }
+
+    fn append<S: Into<String>>(key: S, val: Json) -> Res {
+        let mut db = DB.write().unwrap();
+        db.eval_write_cmd(Cmd::Append(key.into(), val))
+            .map(json_val)
+    }
+
+    fn set<S: Into<String>, J: Into<Json>>(key: S, val: J) -> Res {
+        eval_write(Cmd::Set(key.into(), val.into()))
+    }
 
     fn bad_type<'a>() -> Res {
         Err(Error::BadType)
@@ -426,11 +461,10 @@ mod tests {
 
     #[test]
     fn open_db() {
-        let mut db = test_db();
-        assert_eq!(10, db.cache.len());
-        assert_eq!(db_get(&mut db, "b"), Ok(Json::Bool(true)));
+        assert_eq!(10, len());
+        assert_eq!(get("b"), Ok(Json::Bool(true)));
         assert_eq!(
-            db_get(&mut db, "ia"),
+            get("ia"),
             Ok(Json::Array(vec![
                 Json::from(1),
                 Json::from(2),
@@ -439,22 +473,22 @@ mod tests {
                 Json::from(5),
             ]))
         );
-        assert_eq!(db_get(&mut db, "i"), Ok(Json::from(3)));
-        assert_eq!(db_get(&mut db, "f"), Ok(Json::from(3.3)));
+        assert_eq!(get("i"), Ok(Json::from(2)));
+        assert_eq!(get("f"), Ok(Json::from(3.3)));
         assert_eq!(
-            db_get(&mut db, "fa"),
+            get("fa"),
             Ok(Json::Array(vec![
-                Json::from(1.0),
-                Json::from(2.0),
-                Json::from(3.0),
-                Json::from(4.0),
-                Json::from(5.0),
+                Json::from(1.1),
+                Json::from(2.2),
+                Json::from(3.3),
+                Json::from(4.4),
+                Json::from(5.5),
             ]))
         );
-        assert_eq!(db_get(&mut db, "f"), Ok(Json::from(3.3)));
-        assert_eq!(db_get(&mut db, "s"), Ok(Json::from("hello")));
+        assert_eq!(get("f"), Ok(Json::from(3.3)));
+        assert_eq!(get("s"), Ok(Json::from("hello")));
         assert_eq!(
-            db_get(&mut db, "sa"),
+            get("sa"),
             Ok(Json::Array(vec![
                 Json::from("a"),
                 Json::from("b"),
@@ -462,19 +496,12 @@ mod tests {
                 Json::from("d"),
             ]))
         );
-        assert_eq!(db_get(&mut db, "z"), Ok(Json::from(2.0)));
     }
 
     #[test]
     fn test_get() {
-        let mut db = test_db();
-        let val = db_get(&db, "b");
-        assert_eq!(Ok(Json::Bool(true)), val);
-
-        let val = db_get(&db, "b");
-        assert_eq!(Ok(Json::Bool(true)), val);
-
-        let val = db_get(&db, "ia");
+        assert_eq!(Ok(Json::Bool(true)), get("b"));
+        assert_eq!(Ok(Json::Bool(true)), get("b"));
         assert_eq!(
             Ok(Json::Array(vec![
                 Json::from(1),
@@ -483,89 +510,79 @@ mod tests {
                 Json::from(4),
                 Json::from(5)
             ])),
-            val
+            get("ia")
         );
-
-        let val = db_get(&db, "i");
-        assert_eq!(Ok(Json::from(3)), val);
+        assert_eq!(Ok(Json::from(2)), get("i"));
     }
 
     #[test]
     fn test_first() {
-        let db = test_db();
-        assert_eq!(Ok(Json::Bool(true)), db_first(&db, "b"));
-        assert_eq!(Ok(Json::Bool(true)), db_first(&db, "b"));
-        assert_eq!(Ok(Json::from(3.3)), db_first(&db, "f"));
-        assert_eq!(Ok(Json::from(3)), db_first(&db, "i"));
-        assert_eq!(Ok(Json::from(1.0)), db_first(&db, "fa"));
-        assert_eq!(Ok(Json::from(1)), db_first(&db, "ia"));
+        assert_eq!(Ok(Json::Bool(true)), first("b"));
+        assert_eq!(Ok(Json::Bool(true)), first("b"));
+        assert_eq!(Ok(Json::from(3.3)), first("f"));
+        assert_eq!(Ok(Json::from(2)), first("i"));
+        assert_eq!(Ok(Json::from(1.1)), first("fa"));
+        assert_eq!(Ok(Json::from(1)), first("ia"));
     }
 
     #[test]
     fn test_last() {
-        let db = test_db();
-        assert_eq!(Ok(Json::from(true)), db_last(&db, "b"));
-        assert_eq!(Ok(Json::from(3.3)), db_last(&db, "f"));
-        assert_eq!(Ok(Json::from(3)), db_last(&db, "i"));
-        assert_eq!(Ok(Json::from(5.0)), db_last(&db, "fa"));
-        assert_eq!(Ok(Json::from(5)), db_last(&db, "ia"));
+        assert_eq!(Ok(Json::from(true)), last("b"));
+        assert_eq!(Ok(Json::from(3.3)), last("f"));
+        assert_eq!(Ok(Json::from(2)), last("i"));
+        assert_eq!(Ok(Json::from(5.5)), last("fa"));
+        assert_eq!(Ok(Json::from(5)), last("ia"));
     }
 
     #[test]
     fn test_max() {
-        let db = test_db();
-        assert_eq!(Ok(Json::Bool(true)), db_max(&db, "b"));
-        assert_eq!(Ok(Json::from(3)), db_max(&db, "i"));
-        assert_eq!(Ok(Json::from(3.3)), db_max(&db, "f"));
-        assert_eq!(Ok(Json::from(5)), db_max(&db, "ia"));
-        assert_eq!(Ok(Json::from(5.0)), db_max(&db, "fa"));
+        assert_eq!(Ok(Json::Bool(true)), max("b"));
+        assert_eq!(Ok(Json::from(2)), max("i"));
+        assert_eq!(Ok(Json::from(3.3)), max("f"));
+        assert_eq!(Ok(Json::from(5.0)), max("ia"));
+        assert_eq!(Ok(Json::from(5.5)), max("fa"));
     }
 
     #[test]
     fn test_min() {
-        let mut db = test_db();
-        assert_eq!(Ok(Json::Bool(true)), db_min(&db, "b"));
-        assert_eq!(Ok(Json::from(3)), db_min(&db, "i"));
-        assert_eq!(Ok(Json::from(3.3)), db_min(&db, "f"));
-        assert_eq!(Ok(Json::from(1.0)), db_min(&db, "fa"));
-        assert_eq!(Ok(Json::from(1.0)), db_min(&db, "ia"));
+        assert_eq!(Ok(Json::Bool(true)), min("b"));
+        assert_eq!(Ok(Json::from(2)), min("i"));
+        assert_eq!(Ok(Json::from(3.3)), min("f"));
+        assert_eq!(Ok(Json::from(1.1)), min("fa"));
+        assert_eq!(Ok(Json::from(1.0)), min("ia"));
     }
 
     #[test]
     fn test_avg() {
-        let db = test_db();
-        assert_eq!(Ok(Json::from(3.3)), db_avg(&db, "f"));
-        assert_eq!(Ok(Json::from(3)), db_avg(&db, "i"));
-        assert_eq!(Ok(Json::from(3.0)), db_avg(&db, "fa"));
-        assert_eq!(Ok(Json::from(3.0)), db_avg(&db, "ia"));
+        assert_eq!(Ok(Json::from(3.3)), avg("f"));
+        assert_eq!(Ok(Json::from(2)), avg("i"));
+        assert_eq!(Ok(Json::from(3.3)), avg("fa"));
+        assert_eq!(Ok(Json::from(3.0)), avg("ia"));
     }
 
     #[test]
     fn test_var() {
-        let db = test_db();
-        assert_eq!(Ok(Json::from(3.3)), db_var(&db, "f"));
-        assert_eq!(Ok(Json::from(3)), db_var(&db, "i"));
-        let val = db_var(&db, "fa").unwrap();
-        assert_approx_eq!(2.56, json_f64(&val), 0.0249f64);
-        let val = db_var(&db, "ia").unwrap();
+        assert_eq!(Ok(Json::from(3.3)), var("f"));
+        assert_eq!(Ok(Json::from(2)), var("i"));
+        let val = var("fa").unwrap();
+        assert_approx_eq!(3.10, json_f64(&val), 0.0249f64);
+        let val = var("ia").unwrap();
         assert_approx_eq!(2.56, json_f64(&val), 0.0249f64);
     }
 
     #[test]
     fn test_dev() {
-        let db = test_db();
-        assert_eq!(Ok(Json::from(3.3)), db_dev(&db, "f"));
-        assert_eq!(Ok(Json::from(3)), db_dev(&db, "i"));
-        let val = db_dev(&db, "fa").unwrap();
-        assert_approx_eq!(1.4, json_f64(&val), 0.0249f64);
-        let val = db_dev(&db,  "ia").unwrap();
-        assert_approx_eq!(1.4, json_f64(&val), 0.0249f64);
+        assert_eq!(Ok(Json::from(3.3)), dev("f"));
+        assert_eq!(Ok(Json::from(2)), dev("i"));
+        let val = dev("fa").unwrap();
+        assert_approx_eq!(1.55, json_f64(&val), 0.03f64);
+        let val = dev("ia").unwrap();
+        assert_approx_eq!(1.414, json_f64(&val), 0.03f64);
     }
 
     #[test]
     fn test_add() {
-        let db = test_db();
-        assert_eq!(Ok(Json::from(9.0)), db_add(&db, "x", "y"));
+        assert_eq!(Ok(Json::from(9.0)), add("x", "y"));
         assert_eq!(
             Ok(Json::from(vec![
                 Json::from(5.0),
@@ -574,29 +591,18 @@ mod tests {
                 Json::from(8.0),
                 Json::from(9.0),
             ])),
-            db_add(&db, "x", "ia")
+            add("x", "ia")
         );
 
         assert_eq!(
             Ok(Json::from(vec![
+                Json::from(3.0),
+                Json::from(4.0),
+                Json::from(5.0),
                 Json::from(6.0),
                 Json::from(7.0),
-                Json::from(8.0),
-                Json::from(9.0),
-                Json::from(10.0),
             ])),
-            db_add(&db, "ia", "y")
-        );
-
-        assert_eq!(
-            Ok(Json::from(vec![
-                Json::from(2.0),
-                Json::from(4.0),
-                Json::from(6.0),
-                Json::from(8.0),
-                Json::from(10.0),
-            ])),
-            db_add(&db, "ia", "y")
+            add("ia", "i")
         );
 
         assert_eq!(
@@ -606,7 +612,7 @@ mod tests {
                 Json::from("chello"),
                 Json::from("dhello"),
             ])),
-            db_add(&db, "sa", "s")
+            add("sa", "s")
         );
         assert_eq!(
             Ok(Json::Array(vec![
@@ -615,21 +621,20 @@ mod tests {
                 Json::from("helloc"),
                 Json::from("hellod"),
             ])),
-            db_add(&db, "s", "sa")
+            add("s", "sa")
         );
 
-        assert_eq!(Ok(Json::from("hellohello")), db_add(&db, "s", "s"));
-        assert_eq!(bad_type(), db_add(&db, "s", "f"));
-        assert_eq!(bad_type(), db_add(&db, "f", "s"));
-        assert_eq!(bad_type(), db_add(&db, "i", "s"));
-        assert_eq!(bad_type(), db_add(&db, "s", "i"));
+        assert_eq!(Ok(Json::from("hellohello")), add("s", "s"));
+        assert_eq!(bad_type(), add("s", "f"));
+        assert_eq!(bad_type(), add("f", "s"));
+        assert_eq!(bad_type(), add("i", "s"));
+        assert_eq!(bad_type(), add("s", "i"));
     }
 
     #[test]
     fn test_sub() {
-        let mut db = test_db();
-        assert_eq!(Ok(Json::from(-1.0)), db_sub(&db, "x", "y"));
-        assert_eq!(Ok(Json::from(1.0)), db_sub(&db, "y", "x") );
+        assert_eq!(Ok(Json::from(-1.0)), sub("x", "y"));
+        assert_eq!(Ok(Json::from(1.0)), sub("y", "x"));
         assert_eq!(
             Ok(Json::from(vec![
                 Json::from(3.0),
@@ -638,7 +643,7 @@ mod tests {
                 Json::from(0.0),
                 Json::from(-1.0),
             ])),
-            db_sub(&db, "x", "ia")
+            sub("x", "ia")
         );
 
         assert_eq!(
@@ -649,7 +654,7 @@ mod tests {
                 Json::from(-1.0),
                 Json::from(0.0),
             ])),
-            db_sub(&db, "ia", "y")
+            sub("ia", "y")
         );
 
         assert_eq!(
@@ -660,21 +665,20 @@ mod tests {
                 Json::from(0.0),
                 Json::from(0.0),
             ])),
-            db_sub(&db, "ia", "ia")
+            sub("ia", "ia")
         );
 
-        assert_eq!(bad_type(), db_sub(&db, "s", "s"));
-        assert_eq!(bad_type(), db_sub(&db, "sa", "s"));
-        assert_eq!(bad_type(), db_sub(&db, "s", "sa"));
-        assert_eq!(bad_type(), db_sub(&db, "i", "s"));
-        assert_eq!(bad_type(), db_sub(&db, "s", "i"));
+        assert_eq!(bad_type(), sub("s", "s"));
+        assert_eq!(bad_type(), sub("sa", "s"));
+        assert_eq!(bad_type(), sub("s", "sa"));
+        assert_eq!(bad_type(), sub("i", "s"));
+        assert_eq!(bad_type(), sub("s", "i"));
     }
 
     #[test]
     fn json_mul() {
-        let mut db = test_db();
-        assert_eq!(Ok(Json::from(20.0)), db_mul(&db, "x", "y"));
-        assert_eq!(Ok(Json::from(16.0)), db_mul(&db, "x", "x"));
+        assert_eq!(Ok(Json::from(20.0)), mul("x", "y"));
+        assert_eq!(Ok(Json::from(16.0)), mul("x", "x"));
         let arr = vec![
             Json::from(5.0),
             Json::from(10.0),
@@ -682,11 +686,8 @@ mod tests {
             Json::from(20.0),
             Json::from(25.0),
         ];
-        assert_eq!(
-            Ok(Json::from(arr.clone())),
-            db_mul(&db, "ia", "y")
-        );
-        assert_eq!(Ok(Json::from(arr)), db_mul(&db, "y", "ia"));
+        assert_eq!(Ok(Json::from(arr.clone())), mul("ia", "y"));
+        assert_eq!(Ok(Json::from(arr)), mul("y", "ia"));
         assert_eq!(
             Ok(Json::from(vec![
                 Json::from(1.0),
@@ -695,20 +696,19 @@ mod tests {
                 Json::from(16.0),
                 Json::from(25.0),
             ])),
-            db_mul(&db, "ia", "ia")
+            mul("ia", "ia")
         );
-        assert_eq!(bad_type(), db_mul(&db, "s", "s"));
-        assert_eq!(bad_type(), db_mul(&db, "sa", "s"));
-        assert_eq!(bad_type(), db_mul(&db, "s", "sa"));
-        assert_eq!(bad_type(), db_mul(&db, "i", "s"));
-        assert_eq!(bad_type(), db_mul(&db, "s", "i"));
+        assert_eq!(bad_type(), mul("s", "s"));
+        assert_eq!(bad_type(), mul("sa", "s"));
+        assert_eq!(bad_type(), mul("s", "sa"));
+        assert_eq!(bad_type(), mul("i", "s"));
+        assert_eq!(bad_type(), mul("s", "i"));
     }
 
     #[test]
     fn json_div() {
-        let mut db = test_db();
-        assert_eq!(Ok(Json::from(1.0)), db_div(&db, "x", "x"));
-        assert_eq!(Ok(Json::from(1.0)), db_div(&db, "y", "y"));
+        assert_eq!(Ok(Json::from(1.0)), div("x", "x"));
+        assert_eq!(Ok(Json::from(1.0)), div("y", "y"));
         assert_eq!(
             Ok(Json::from(vec![
                 Json::from(1.0),
@@ -717,7 +717,7 @@ mod tests {
                 Json::from(1.0),
                 Json::from(1.0),
             ])),
-            db_div(&db, "ia", "ia")
+            div("ia", "ia")
         );
         assert_eq!(
             Ok(Json::from(vec![
@@ -727,7 +727,7 @@ mod tests {
                 Json::from(2.0),
                 Json::from(2.5),
             ])),
-            db_div(&db, "ia", "z")
+            div("ia", "i")
         );
         assert_eq!(
             Ok(Json::from(vec![
@@ -737,48 +737,31 @@ mod tests {
                 Json::from(0.5),
                 Json::from(0.4),
             ])),
-            db_div(&db, "z", "ia")
+            div("i", "ia")
         );
 
-        assert_eq!(bad_type(), db_div(&db, "s", "s"));
-        assert_eq!(bad_type(), db_div(&db, "sa", "s"));
-        assert_eq!(bad_type(), db_div(&db, "s", "sa"));
-        assert_eq!(bad_type(), db_div(&db, "i", "s"));
-        assert_eq!(bad_type(), db_div(&db, "s", "i"));
+        assert_eq!(bad_type(), div("s", "s"));
+        assert_eq!(bad_type(), div("sa", "s"));
+        assert_eq!(bad_type(), div("s", "sa"));
+        assert_eq!(bad_type(), div("i", "s"));
+        assert_eq!(bad_type(), div("s", "i"));
     }
 
     #[test]
     fn eval_get_ok() {
-        let mut db = Db::open("test.memson").unwrap();
-        let vec = vec![1, 2, 3, 4, 5];
-        db.insert("a", vec.clone());
-        let val = Json::from(vec);
-        let exp = Reply::Ref(&val);
-        assert_eq!(Ok(exp), db.eval_read_cmd(Cmd::Get("a".to_string())));
+        let val = Json::from(vec![
+            Json::from(1),
+            Json::from(2),
+            Json::from(3),
+            Json::from(4),
+            Json::from(5),
+        ]);
+        set("a", val.clone()).unwrap();
+        assert_eq!(Ok(val), get("a"));
     }
 
     #[test]
     fn eval_get_string_err_not_found() {
-        let mut db = Db::open("test.memson").unwrap();
-        db.insert("a".to_string(), Json::from(1));
-        assert_eq!(
-            Err(Error::UnknownKey("b".to_string())),
-            db.eval_read_cmd(Cmd::Get("b".to_string()))
-        );
-    }
-
-    #[test]
-    fn eval_append_ok() {
-        let mut db = Db::open("test.memson").unwrap();
-        db.insert("a", vec![1, 2, 3, 4, 5]);
-        assert_eq!(
-            Ok(Reply::Update),
-            db.eval_write_cmd(Cmd::Append("a".to_string(), Json::from(6)))
-        );
-        let val = Json::from(vec![1, 2, 3, 4, 5, 6]);
-        assert_eq!(
-            Ok(Reply::Ref(&val)),
-            db.eval_read_cmd(Cmd::Get("a".to_string()))
-        );
+        assert_eq!(Err(Error::UnknownKey("ania".to_string())), get("ania"));
     }
 }
