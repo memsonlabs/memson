@@ -5,6 +5,12 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Query {
+    selects: Vec<Cmd>,
+    from: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Cmd {
     #[serde(rename = "append")]
     Append(String, Json),
@@ -111,7 +117,7 @@ pub type Res<'a> = Result<Reply<'a>, Error>;
 
 #[derive(Debug)]
 pub struct Db {
-    cache: BTreeMap<String, Json>,
+    pub cache: BTreeMap<String, Json>,
     store: sled::Db,
 }
 
@@ -144,6 +150,7 @@ impl Db {
         if let Err(_) = self.store.insert(&key, val.to_string().as_bytes()) {
             return Err(Error::BadIO);
         }
+        self.store.flush().unwrap();
         self.cache.insert(key, val);
         Ok(())
     }
@@ -308,7 +315,7 @@ impl Db {
         self.eval_bin_fn(lhs, rhs, &div)
     }
 
-    fn get(&self, key: String) -> Result<&Json, Error> {
+    pub fn get(&self, key: String) -> Result<&Json, Error> {
         self.cache.get(&key).ok_or(Error::UnknownKey(key))
     }
 
@@ -368,6 +375,11 @@ mod tests {
                 ]),
             )
             .unwrap();
+            db.insert("t", Json::from(vec![
+                json!({"name": "james", "age": 35}),
+                json!({"name": "ania", "age": 28, "job": "English Teacher"}),
+                json!({"name": "misha", "age": 12}),
+            ])).unwrap();
             RwLock::new(db)
         };
     }
@@ -462,7 +474,7 @@ mod tests {
 
     #[test]
     fn open_db() {
-        assert_eq!(11, len());
+        assert_eq!(12, len());
         assert_eq!(get("b"), Ok(Json::Bool(true)));
         assert_eq!(
             get("ia"),

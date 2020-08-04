@@ -53,6 +53,7 @@ use crate::db::{Cmd, Db, Res};
 
 mod db;
 mod json;
+mod query;
 
 /// The in-memory database shared amongst all clients.
 ///
