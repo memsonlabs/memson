@@ -4,11 +4,7 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Query {
-    selects: Vec<Cmd>,
-    from: String,
-}
+use crate::query::{self, QueryCmd};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Cmd {
@@ -46,9 +42,110 @@ pub enum Cmd {
     Var(String),
     #[serde(rename = "pop")]
     Pop(String),
+    #[serde(rename = "query")]
+    Query(QueryCmd),
 }
 
+pub enum ParseError {
+    BadArgument(Json),
+    BadCmd,
+}
+
+
 impl Cmd {
+    fn sum(key: String) -> Cmd {
+        Cmd::Sum(key)
+    }
+
+    fn get(key: String) -> Cmd {
+        Cmd::Get(key)
+    }
+
+    fn len(key: String) -> Cmd {
+        Cmd::Len(key)
+    }
+
+    fn max(key: String) -> Cmd {
+        Cmd::Max(key)
+    }   
+    
+    fn min(key: String) -> Cmd {
+        Cmd::Min(key)
+    } 
+    
+    fn avg(key: String) -> Cmd {
+        Cmd::Avg(key)
+    }  
+
+    fn dev(key: String) -> Cmd {
+        Cmd::Dev(key)
+    } 
+
+    fn first(key: String) -> Cmd {
+        Cmd::First(key)
+    } 
+
+    fn last(key: String) -> Cmd {
+        Cmd::Last(key)
+    }    
+    
+    fn var(key: String) -> Cmd {
+        Cmd::Var(key)
+    } 
+
+    fn pop(key: String) -> Cmd {
+        Cmd::Pop(key)
+    }        
+
+    pub fn parse_cmd(json: Json) -> Result<Cmd, ParseError> {
+        serde_json::from_value(json).map_err(|_| ParseError::BadCmd)
+    }
+
+    pub fn parse(json: Json) -> Result<Vec<Cmd>, ParseError> {
+        match json {
+            Json::String(s) => Ok(vec![Cmd::Get(s)]),
+            Json::Array(arr) => {
+                let mut cmds = Vec::new();
+                for val in arr {
+                    cmds.extend(Cmd::parse(val)?);
+                }
+                Ok(cmds)
+            }
+            Json::Object(obj) => {
+                let mut cmds = Vec::new();
+                for (key, val) in obj {
+                    cmds.push(Self::parse_obj(key, val)?);
+                }
+                Ok(cmds)
+            }
+            _ => return Err(ParseError::BadCmd),
+        }
+    }
+
+    pub fn parse_obj(key: String, arg: Json) -> Result<Cmd, ParseError> {
+        match key.as_ref() {
+            "sum" => Self::parse_arg(arg, &Cmd::sum),
+            "first" => Self::parse_arg(arg, &Cmd::first),
+            "last" => Self::parse_arg(arg, &Cmd::last),
+            "pop" => Self::parse_arg(arg, &Cmd::pop),
+            "var" => Self::parse_arg(arg, &Cmd::var),
+            "dev" => Self::parse_arg(arg, &Cmd::dev),
+            "avg" => Self::parse_arg(arg, &Cmd::avg),
+            "max" => Self::parse_arg(arg, &Cmd::max),
+            "min" => Self::parse_arg(arg, &Cmd::min),
+            "len" => Self::parse_arg(arg, &Cmd::len),
+            "get" => Self::parse_arg(arg, &Cmd::get), 
+            _ => unimplemented!(),
+        }
+    }
+
+    fn parse_arg(arg: Json, f:&dyn Fn(String) -> Cmd) -> Result<Cmd, ParseError> {
+        match arg {
+            Json::String(key) => Ok(f(key)),
+            val => return Err(ParseError::BadArgument(val)),
+        }
+    }
+
     pub fn is_mutation(&self) -> bool {
         match self {
             Cmd::Append(_, _) | Cmd::Set(_, _) | Cmd::Pop(_) => true,
@@ -65,7 +162,8 @@ impl Cmd {
             | Cmd::Sum(_)
             | Cmd::First(_)
             | Cmd::Last(_)
-            | Cmd::Var(_) => false,
+            | Cmd::Var(_)
+            | Cmd::Query(_) => false,
         }
     }
 }
@@ -78,9 +176,11 @@ pub enum Error {
     EmptySequence,
     BadNumber,
     UnknownKey(String),
+    Query(query::Error),
 }
 
 impl Error {
+    // TODO provide more details in errors
     pub fn to_string(&self) -> String {
         let msg = match self {
             Error::BadType => "incorrect type",
@@ -89,6 +189,7 @@ impl Error {
             Error::EmptySequence => "empty sequence",
             Error::BadNumber => "bad number",
             Error::UnknownKey(_) => "unknown key",
+            Error::Query(_) => "bad query",
         };
         "error: ".to_string() + msg
     }
@@ -144,25 +245,18 @@ impl Db {
         Ok(Self { cache, store })
     }
 
-    pub fn insert<K: Into<String>, V: Into<Json>>(&mut self, key: K, val: V) -> Result<(), Error> {
-        let key = key.into();
-        let val = val.into();
-        if let Err(_) = self.store.insert(&key, val.to_string().as_bytes()) {
-            return Err(Error::BadIO);
-        }
-        self.store.flush().unwrap();
-        self.cache.insert(key, val);
-        Ok(())
-    }
-
-    pub fn len(&self) -> usize {
-        self.cache.len()
-    }
-
     fn eval_append(&mut self, key: String, arg: Json) -> Res<'_> {
         let val = self.get_mut(key)?;
         append(val, arg);
         Ok(Reply::Update)
+    }
+
+    // TODO implement other types
+    pub fn eval_aggregate(&self, cmd: Cmd) -> Result<Json, Error> {
+        match cmd {
+            Cmd::Sum(key) => self.eval_sum(key),
+            _ => unimplemented!(),
+        }
     }
 
     pub fn eval_read_cmd(&self, cmd: Cmd) -> Res<'_> {
@@ -177,10 +271,11 @@ impl Db {
             Cmd::Sub(lhs, rhs) => self.eval_sub(lhs, rhs),
             Cmd::Mul(lhs, rhs) => self.eval_mul(lhs, rhs),
             Cmd::Div(lhs, rhs) => self.eval_div(lhs, rhs),
-            Cmd::Sum(key) => self.eval_sum(key),
+            Cmd::Sum(key) => self.eval_sum(key).map(Reply::Val),
             Cmd::First(key) => self.eval_first(key),
             Cmd::Last(key) => self.eval_last(key),
             Cmd::Var(key) => self.eval_var(key),
+            Cmd::Query(qry) => self.eval_query(qry),
             Cmd::Set(_, _) | Cmd::Append(_, _) | Cmd::Pop(_) => Err(Error::BadState),
         }
     }
@@ -203,7 +298,8 @@ impl Db {
             | Cmd::Div(_, _)
             | Cmd::First(_)
             | Cmd::Last(_)
-            | Cmd::Var(_) => Err(Error::BadState),
+            | Cmd::Var(_)
+            | Cmd::Query(_) => Err(Error::BadState),
         }
     }
 
@@ -219,9 +315,15 @@ impl Db {
         Ok(Reply::Val(len(val)))
     }
 
-    fn eval_sum(&self, key: String) -> Res<'_> {
+    fn eval_sum(&self, key: String) -> Result<Json, Error> {
         let val = self.get(key)?;
-        sum(val).map(Reply::Val)
+        sum(val)
+    }
+
+    fn eval_query(&self, cmd: QueryCmd) -> Res<'_> {
+        cmd.eval(self)
+            .map(Reply::Val)
+            .map_err(|err| Error::Query(err))
     }
 
     fn eval_min(&self, key: String) -> Res<'_> {
@@ -325,7 +427,7 @@ impl Db {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     use assert_approx_eq::assert_approx_eq;
@@ -333,10 +435,19 @@ mod tests {
     use serde_json::json;
     use std::sync::RwLock;
 
+    pub fn insert<K: Into<String>, V: Into<Json>>(db: &mut Db, key: K, val: V) {
+        let key = key.into();
+        let val = val.into();
+        db.store.insert(&key, val.to_string().as_bytes()).unwrap();
+        db.store.flush().unwrap();
+        db.cache.insert(key, val);
+    }
+
     lazy_static! {
         static ref DB: RwLock<Db> = {
             let mut db = Db::open("test").unwrap();
-            db.insert(
+            insert(
+                &mut db,
                 "a",
                 Json::from(vec![
                     Json::from(1),
@@ -345,12 +456,12 @@ mod tests {
                     Json::from(4),
                     Json::from(5),
                 ]),
-            )
-            .unwrap();
-            db.insert("b", true).unwrap();
-            db.insert("i", 2).unwrap();
-            db.insert("f", 3.3).unwrap();
-            db.insert(
+            );
+            insert(&mut db, "b", true);
+            insert(&mut db, "i", 2);
+            insert(&mut db, "f", 3.3);
+            insert(
+                &mut db,
                 "ia",
                 Json::from(
                     vec![1, 2, 3, 4, 5]
@@ -358,14 +469,13 @@ mod tests {
                         .map(Json::from)
                         .collect::<Vec<Json>>(),
                 ),
-            )
-            .unwrap();
-            db.insert("fa", Json::from(vec![1.1, 2.2, 3.3, 4.4, 5.5]))
-                .unwrap();
-            db.insert("x", 4).unwrap();
-            db.insert("y", 5).unwrap();
-            db.insert("s", "hello").unwrap();
-            db.insert(
+            );
+            insert(&mut db, "fa", Json::from(vec![1.1, 2.2, 3.3, 4.4, 5.5]));
+            insert(&mut db, "x", 4);
+            insert(&mut db, "y", 5);
+            insert(&mut db, "s", "hello");
+            insert(
+                &mut db,
                 "sa",
                 Json::from(vec![
                     Json::from("a"),
@@ -373,13 +483,16 @@ mod tests {
                     Json::from("c"),
                     Json::from("d"),
                 ]),
-            )
-            .unwrap();
-            db.insert("t", Json::from(vec![
-                json!({"name": "james", "age": 35}),
-                json!({"name": "ania", "age": 28, "job": "English Teacher"}),
-                json!({"name": "misha", "age": 12}),
-            ])).unwrap();
+            );
+            insert(
+                &mut db,
+                "t",
+                Json::from(vec![
+                    json!({"name": "james", "age": 35}),
+                    json!({"name": "ania", "age": 28, "job": "English Teacher"}),
+                    json!({"name": "misha", "age": 12}),
+                ]),
+            );
             RwLock::new(db)
         };
     }
@@ -409,35 +522,35 @@ mod tests {
     }
 
     fn get<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::Get(key.into()))
+        eval_read(Cmd::get(key.into()))
     }
 
     fn first<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::First(key.into()))
+        eval_read(Cmd::first(key.into()))
     }
 
     fn last<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::Last(key.into()))
+        eval_read(Cmd::last(key.into()))
     }
 
     fn max<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::Max(key.into()))
+        eval_read(Cmd::max(key.into()))
     }
 
     fn min<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::Min(key.into()))
+        eval_read(Cmd::min(key.into()))
     }
 
     fn var<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::Var(key.into()))
+        eval_read(Cmd::var(key.into()))
     }
 
     fn dev<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::Dev(key.into()))
+        eval_read(Cmd::dev(key.into()))
     }
 
     fn avg<S: Into<String>>(key: S) -> Res {
-        eval_read(Cmd::Avg(key.into()))
+        eval_read(Cmd::avg(key.into()))
     }
 
     fn div<S: Into<String>>(lhs: S, rhs: S) -> Res {
@@ -447,15 +560,18 @@ mod tests {
     fn mul<S: Into<String>>(lhs: S, rhs: S) -> Res {
         eval_read(Cmd::Mul(lhs.into(), rhs.into()))
     }
+
     fn add<S: Into<String>>(lhs: S, rhs: S) -> Res {
         eval_read(Cmd::Add(lhs.into(), rhs.into()))
     }
+
     fn sub<S: Into<String>>(lhs: S, rhs: S) -> Res {
         eval_read(Cmd::Sub(lhs.into(), rhs.into()))
     }
+
     fn len() -> usize {
         let db = DB.read().unwrap();
-        db.len()
+        db.cache.len()
     }
 
     fn append<S: Into<String>>(key: S, val: Json) -> Res {

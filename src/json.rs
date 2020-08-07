@@ -3,8 +3,112 @@
 use serde_json::Number as JsonNum;
 use serde_json::Number;
 pub use serde_json::{Map, Value as Json};
+use std::cmp::PartialOrd;
 use std::mem;
 use crate::db::{Error, Reply, Res};
+
+trait Compare {
+    fn gt(&self) -> bool;
+    fn gte(&self) -> bool;
+    fn lt(&self) -> bool;
+    fn lte(&self) -> bool;
+}
+
+struct Cmp<T> {
+    x: T,
+    y: T,
+}
+
+impl <T:PartialOrd> Compare for Cmp<T> {
+    fn gt(&self) -> bool {
+        self.x > self.y
+    }
+
+    fn gte(&self) -> bool {
+        self.x >= self.y
+    }    
+
+    fn lt(&self) -> bool {
+        self.x < self.y
+    }
+
+    fn lte(&self) -> bool {
+        self.x <= self.y
+    }   
+}
+
+impl <T:PartialOrd> Cmp<T> {
+    fn new(x: T, y: T) -> Cmp<T> {
+        Self { x, y }
+    }  
+}
+
+pub fn json_add_num(x: &Json, y: &JsonNum) -> Option<Json> {
+    let x = match x {
+        Json::Number(x) => x,
+        _ => return None,
+    };
+    let val = match (x.is_i64(), y.is_i64()) {
+        (true, true) => {
+            let x: i64 = x.as_i64().unwrap();
+            let y: i64 = y.as_i64().unwrap();
+            Json::from(x + y)
+        }
+        _ => {
+            let x = x.as_f64().unwrap();
+            let y = y.as_f64().unwrap();
+            Json::from(x + y)
+        }
+    };
+    Some(val)
+}
+
+pub fn json_eq(x: &Json, y: &Json) -> Option<bool> {
+    Some(x == y)
+}
+
+pub fn json_neq(x: &Json, y: &Json) -> Option<bool> {
+    Some(x != y)
+}
+
+fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> Option<bool> {
+    match (x, y) {
+        (Json::String(x), Json::String(y)) =>  {
+            let cmp = Cmp::new(x, y);
+            Some(p(&cmp))
+        }
+        (Json::Number(x), Json::Number(y)) => {
+            let x = match x.as_i64() {
+                Some(val) => val,
+                None => return None,
+            };
+            let y = match y.as_i64() {
+                Some(val) => val,
+                None => return None,
+            };
+            let cmp = Cmp::new(x, y);
+            Some(p(&cmp))
+        }
+        (Json::Bool(x), Json::Bool(y)) => Some(x > y),
+        _ => None,
+    }
+}
+
+pub fn json_gt(x: &Json, y: &Json) -> Option<bool> {
+    json_cmp(x, y, &|x| x.gt())
+}
+
+pub fn json_lt(x: &Json, y: &Json) -> Option<bool> {
+    json_cmp(x, y, &|x| x.lt())
+}
+
+pub fn json_gte(x: &Json, y: &Json) -> Option<bool> {
+    json_cmp(x, y, &|x| x.gte())
+}
+
+pub fn json_lte(x: &Json, y: &Json) -> Option<bool> {
+    json_cmp(x, y, &|x| x.lte())
+}
 
 pub fn len(val: &Json) -> Json {
     match val {
