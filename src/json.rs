@@ -6,6 +6,7 @@ pub use serde_json::{Map, Value as Json};
 use std::cmp::PartialOrd;
 use std::mem;
 use crate::db::{Error, Reply, Res};
+use std::fs::OpenOptions;
 
 trait Compare {
     fn gt(&self) -> bool;
@@ -41,6 +42,49 @@ impl <T:PartialOrd> Cmp<T> {
     fn new(x: T, y: T) -> Cmp<T> {
         Self { x, y }
     }  
+}
+
+pub fn json_max(x: &Json, y:&Json) -> Option<Json> {
+    match (x, y) {
+        (Json::String(x), Json::String(y)) => {
+            let val = if x > y {
+                Json::String(x.to_string())
+            } else {
+                Json::String(y.to_string())
+            };
+            Some(val)
+        }
+        (Json::String(x), _) => None,
+        (Json::Number(x), Json::Number(y)) => {
+            let x = match x.as_i64() {
+                Some(val) => val,
+                None => return None,
+            };
+            let y = match y.as_i64() {
+                Some(val) => val,
+                None => return None,
+            };
+            Some(Json::from(if x > y { x } else { y }))
+        }
+        (Json::Number(x), _) => {
+            let x = match x.as_i64() {
+                Some(val) => val,
+                None => return None,
+            };
+            let y = match y.as_i64() {
+                Some(val) => val,
+                None => return None,
+            };
+            Some(Json::from(if x > y { x } else { y }))
+        }
+        (Json::Bool(x), Json::Bool(y)) => {
+            Some(Json::from(if x > y { *x } else { *y }))
+        }
+        (Json::Bool(x), _) => {
+            None
+        }
+        _ => unimplemented!()
+    }
 }
 
 pub fn json_add_num(x: &Json, y: &JsonNum) -> Option<Json> {

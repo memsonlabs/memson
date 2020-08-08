@@ -2,7 +2,7 @@ use crate::db::{Cmd,Db};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
-use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, json_add_num};
+use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, json_add_num, json_max};
 
 type JsonObj = Map<String, Json>;
 
@@ -96,6 +96,9 @@ fn parse_selects_to_cmd(selects: &[Json]) -> Result<Vec<Cmd>, Error> {
 fn eval_aggregate(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
     match cmd {
         Cmd::Sum(key) => eval_sum(&key, rows),
+        Cmd::Max(key) => eval_max(&key, rows),
+        Cmd::Min(key) => eval_min(&key, rows),
+        //Cmd::Avg(key) => eval_avg(&key, rows),
         _ => unimplemented!(),
     }
 }
@@ -113,6 +116,23 @@ fn eval_sum(key: &str, rows: &[Json]) -> Result<Json, Error> {
         }
     }
     Ok(Json::from(total))
+}
+
+fn eval_max(key: &str, rows: &[Json]) -> Result<Json, Error> {
+    let mut max_val = None;
+    for row in rows {
+        if let Some(val) = row.get(key) {
+            max_val = match max_val {
+                None => Some(val.clone()),
+                Some(cur_max) => {
+                    let val = json_max(&cur_max, val).ok_or(Error::BadSelect)?;
+                    Some(val)
+                },
+            }
+        }
+    }
+    let val = if let Some(val) = max_val { val } else { Json::Null };
+    Ok(val)
 }
 
 struct Query<'a> {
@@ -386,12 +406,35 @@ mod tests {
     fn select_max_num_ok() {
         let qry = query(json!({
             "select": {
-                "maxAge": {"max", "age"}
+                "maxAge": {"max": "age"}
             },
             "from": "t"
         }));
-        let val = Json::from(json!({"totalAge": 73}));
+        let val = Json::from(json!({"maxAge": 35}));
         assert_eq!(Ok(val), qry.eval());
     }
 
+    #[test]
+    fn select_max_str_ok() {
+        let qry = query(json!({
+            "select": {
+                "maxName": {"max": "name"}
+            },
+            "from": "t"
+        }));
+        let val = Json::from(json!({"maxName": "misha"}));
+        assert_eq!(Ok(val), qry.eval());
+    }
+
+    #[test]
+    fn select_min_num_ok() {
+        let qry = query(json!({
+            "select": {
+                "minAge": {"min": "age"}
+            },
+            "from": "t"
+        }));
+        let val = Json::from(json!({"minAge": 10}));
+        assert_eq!(Ok(val), qry.eval());
+    }
 }
