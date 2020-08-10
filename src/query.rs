@@ -253,6 +253,7 @@ pub enum Error {
     BadWhere,
     NotArray,
     BadType,
+    NotAggregate,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -335,6 +336,41 @@ fn eval_aggregate(cmd: Cmd, rows: &[Json]) -> Result<Option<Json>, Error> {
         Cmd::Last(key) => eval_agg(&key, rows, Last::new()),
         Cmd::Var(key) => eval_var(&key, rows),
         Cmd::Dev(key) => eval_dev(&key, rows),
+        _ => return Err(Error::NotAggregate),
+    }
+}
+
+fn eval_nonaggregate(cmds: &[(String,Cmd)], rows: &[Json]) -> Result<Json, Error> {
+    let mut out = Vec::new();
+    for row in rows {
+        let mut obj = None;
+        for cmd in cmds {
+            eval_row(&mut obj, cmd, row)?;
+        }
+        if let Some(obj) = obj {
+            out.push(Json::from(obj));
+        }
+    }
+    Ok(Json::Array(out))
+}
+
+fn eval_row(out: &mut Option<JsonObj>, cmd: &(String,Cmd), row:&Json) -> Result<(), Error> {
+    match (&cmd.1, row) {
+        (Cmd::Get(key), Json::Object(obj)) => {
+            if let Some(val) = obj.get(key) {
+                let key = cmd.0.to_string();
+                let val = val.clone();
+                if let Some(ref mut obj) = out {
+                    obj.insert(key, val);
+                } else {
+                    let mut o = JsonObj::new();
+                    o.insert("_id".to_string(), obj.get("_id").unwrap().clone());
+                    o.insert(key, val);
+                    *out = Some(o);
+                }
+            }
+            Ok(())
+        }
         _ => unimplemented!(),
     }
 }
@@ -378,6 +414,15 @@ fn eval_agg<'a, A:'a>(key: &str, rows: &'a [Json], mut agg: A) -> Result<Option<
 struct Query<'a> {
     db: &'a Db,
     cmd: QueryCmd,
+}
+
+fn is_aggregation(cmds: &[(String, Cmd)]) -> bool {
+    for (_,cmd) in cmds {
+        if !cmd.is_aggregate() {
+            return false;
+        }
+    }
+    true
 }
 
 impl<'a> Query<'a> {
@@ -429,14 +474,23 @@ impl<'a> Query<'a> {
     }
 
     fn eval_obj_selects(&self, obj: JsonObj, rows: &[Json]) -> Result<Json, Error> {
-        let mut out = JsonObj::new();
+
+        let mut cmds = Vec::new();
         for (key, val) in obj {
             let cmd = Cmd::parse_cmd(val).map_err(|_| Error::BadSelect)?;
-            if let Some(val) = eval_aggregate(cmd, rows)? {
-                out.insert(key, val);
-            }
+            cmds.push((key, cmd));
         }
-        Ok(Json::Object(out))
+        if is_aggregation(&cmds) {
+            let mut out = JsonObj::new();
+            for (key,cmd) in cmds {
+                if let Some(val) = eval_aggregate(cmd, rows)? {
+                    out.insert(key, val);
+                }
+            }
+            Ok(Json::Object(out))
+        } else {
+            eval_nonaggregate(&cmds, rows)
+        }
     }
 
     //TODO remove clones
@@ -726,5 +780,54 @@ mod tests {
             "from": "t"
         }));
         assert_eq!(Ok(json!({"devAge": 12.897028081435401})), qry.eval());
+    }
+
+    #[test]
+    fn select_max_age_where_age_gt_20() {
+        let qry = query(json!({
+            "select": {
+                "maxAge": {"max": "age"}
+            },
+            "from": "t",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(Ok(json!({"maxAge": 35})), qry.eval());
+    }
+
+    #[test]
+    fn select_get_age_where_age_gt_20() {
+        let qry = query(json!({
+            "select": {
+                "age": {"get": "age"}
+            },
+            "from": "t",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(Ok(json!([{"_id": 0,"age":35}, {"_id": 1, "age": 28}])), qry.eval());
+    }
+
+    #[test]
+    fn select_min_age_where_age_gt_20() {
+        let qry = query(json!({
+            "select": {
+                "minAge": {"min": "age"}
+            },
+            "from": "t",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(Ok(json!({"minAge": 28})), qry.eval());
+    }
+
+    #[test]
+    fn select_min_max_age_where_age_gt_20() {
+        let qry = query(json!({
+            "select": {
+                "youngestAge": {"min": "age"},
+                "oldestAge": {"max": "age"}
+            },
+            "from": "t",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry.eval());
     }
 }

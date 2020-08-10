@@ -14,7 +14,7 @@ pub enum Cmd {
     #[serde(rename = "set")]
     Set(String, Json),
     #[serde(rename = "len")]
-    Len(String),
+    Count(String),
     #[serde(rename = "max")]
     Max(String),
     #[serde(rename = "min")]
@@ -59,8 +59,8 @@ impl Cmd {
         Cmd::Get(key)
     }
 
-    fn len(key: String) -> Cmd {
-        Cmd::Len(key)
+    fn count(key: String) -> Cmd {
+        Cmd::Count(key)
     }
 
     fn max(key: String) -> Cmd {
@@ -131,7 +131,7 @@ impl Cmd {
             "avg" => Self::parse_arg(arg, &Cmd::avg),
             "max" => Self::parse_arg(arg, &Cmd::max),
             "min" => Self::parse_arg(arg, &Cmd::min),
-            "len" => Self::parse_arg(arg, &Cmd::len),
+            "len" => Self::parse_arg(arg, &Cmd::count),
             "get" => Self::parse_arg(arg, &Cmd::get),
             _ => unimplemented!(),
         }
@@ -148,7 +148,7 @@ impl Cmd {
         match self {
             Cmd::Append(_, _) | Cmd::Set(_, _) | Cmd::Pop(_) => true,
             Cmd::Get(_)
-            | Cmd::Len(_)
+            | Cmd::Count(_)
             | Cmd::Max(_)
             | Cmd::Min(_)
             | Cmd::Dev(_)
@@ -162,6 +162,13 @@ impl Cmd {
             | Cmd::Last(_)
             | Cmd::Var(_)
             | Cmd::Query(_) => false,
+        }
+    }
+
+    pub fn is_aggregate(&self) -> bool {
+        match self {
+            Cmd::Avg(_) | Cmd::Count(_) | Cmd::Max(_) | Cmd::First(_) | Cmd::Min(_) | Cmd::Dev(_) | Cmd::Last(_) | Cmd::Sum(_) | Cmd::Var(_) => true,
+            _ => false,
         }
     }
 }
@@ -231,7 +238,7 @@ impl Db {
     pub fn eval_read_cmd(&self, cmd: Cmd) -> Res<'_> {
         match cmd {
             Cmd::Get(key) => self.eval_get(key),
-            Cmd::Len(key) => self.eval_len(key),
+            Cmd::Count(key) => self.eval_len(key),
             Cmd::Max(key) => self.eval_max(key),
             Cmd::Min(key) => self.eval_min(key),
             Cmd::Avg(key) => self.eval_avg(key),
@@ -255,7 +262,7 @@ impl Db {
             Cmd::Append(key, val) => self.eval_append(key, val),
             Cmd::Pop(key) => self.eval_pop(key),
             Cmd::Get(_)
-            | Cmd::Len(_)
+            | Cmd::Count(_)
             | Cmd::Max(_)
             | Cmd::Min(_)
             | Cmd::Avg(_)
