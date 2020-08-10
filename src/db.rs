@@ -2,7 +2,6 @@ use crate::json::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use crate::query::{self, QueryCmd};
 
@@ -171,7 +170,6 @@ impl Cmd {
 pub enum Error {
     BadType,
     BadState,
-    BadIO,
     EmptySequence,
     BadNumber,
     UnknownKey(String),
@@ -184,7 +182,6 @@ impl Error {
         let msg = match self {
             Error::BadType => "incorrect type",
             Error::BadState => "incorrect internal state",
-            Error::BadIO => "bad i/o",
             Error::EmptySequence => "empty sequence",
             Error::BadNumber => "bad number",
             Error::UnknownKey(_) => "unknown key",

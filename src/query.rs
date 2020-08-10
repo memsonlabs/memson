@@ -1,8 +1,8 @@
 use crate::db::{Cmd, Db};
 
-use crate::json::{self, *};
+use crate::json::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value as Json, Number as JsonNum, Value};
+use serde_json::{Map, Value as Json};
 
 trait Aggregate<'a> {
     fn aggregate(&mut self, val:&'a Json) -> Result<(), Error>;
@@ -21,12 +21,12 @@ impl <'a> Last<'a> {
 }
 
 impl <'a> Aggregate<'a> for Last<'a> {
-    fn aggregate(&mut self, val: &'a Value) -> Result<(), Error> {
+    fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         self.val = Some(val);
         Ok(())
     }
 
-    fn apply(self) -> Option<Value> {
+    fn apply(self) -> Option<Json> {
         self.val.map(|x| x.clone())
     }
 }
@@ -43,14 +43,14 @@ impl <'a> First<'a> {
 }
 
 impl <'a> Aggregate<'a> for First<'a> {
-    fn aggregate(&mut self, val: &'a Value) -> Result<(), Error> {
+    fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         if self.val.is_none() {
             self.val = Some(val);
         }
         Ok(())
     }
 
-    fn apply(self) -> Option<Value> {
+    fn apply(self) -> Option<Json> {
         self.val.map(|x| x.clone())
     }
 }
@@ -67,7 +67,7 @@ impl Sum {
 }
 
 impl <'a> Aggregate<'a> for Sum {
-    fn aggregate(&mut self, val: &'a Value) -> Result<(), Error> {
+    fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         self.total = match (&self.total, val) {
             (None, Json::Number(val)) => Some(Json::Number(val.clone())),
             (None, _) => return Err(Error::BadType),
@@ -80,7 +80,7 @@ impl <'a> Aggregate<'a> for Sum {
         Ok(())
     }
 
-    fn apply(self) -> Option<Value> {
+    fn apply(self) -> Option<Json> {
         self.total
     }
 }
@@ -97,7 +97,7 @@ impl <'a> Min<'a> {
 }
 
 impl <'a> Aggregate<'a> for Min<'a> {
-    fn aggregate(&mut self, val: &'a Value) -> Result<(), Error> {
+    fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         self.min = match (&self.min, val) {
             (None, val) => Some(val),
             (Some(Json::String(y)), Json::String(x)) => {
@@ -113,7 +113,7 @@ impl <'a> Aggregate<'a> for Min<'a> {
         Ok(())
     }
 
-    fn apply(self) -> Option<Value> {
+    fn apply(self) -> Option<Json> {
         self.min.map(|x| x.clone())
     }
 }
@@ -136,7 +136,7 @@ impl <'a> Max<'a> {
 }
 
 impl <'a> Aggregate<'a> for Max<'a> {
-    fn aggregate(&mut self, val: &'a Value) -> Result<(), Error> {
+    fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         let max = match self.max {
                 Some(max) => {
                     match (max, val) {
@@ -160,7 +160,7 @@ impl <'a> Aggregate<'a> for Max<'a> {
             Ok(())
     }
 
-    fn apply(self) -> Option<Value> {
+    fn apply(self) -> Option<Json> {
         self.max.map(|x| x.clone())
     }
 }
@@ -180,7 +180,7 @@ impl Var {
 }
 
 impl <'a> Aggregate<'a> for Var {
-    fn aggregate(&mut self, val: &'a Value) -> Result<(), Error> {
+    fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         let mut val = val.as_f64().ok_or(Error::BadType)?;
         val = val - self.mean;
         val = val * val;  //square the diff
@@ -188,7 +188,7 @@ impl <'a> Aggregate<'a> for Var {
         Ok(())
     }
 
-    fn apply(self) -> Option<Value> {
+    fn apply(self) -> Option<Json> {
         let var = self.total / ((self.count - 1)as f64);
         Some(Json::from(var))
     }
@@ -217,7 +217,7 @@ impl <'a> Aggregate<'a> for Avg {
         Ok(())
     }
 
-    fn apply(self) -> Option<Value> {
+    fn apply(self) -> Option<Json> {
         if self.count == 0 {
             None
         } else {
@@ -366,49 +366,6 @@ fn eval_dev(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
     Ok(r)
 }
 
-
-fn eval_optima(
-    key: &str,
-    rows: &[Json],
-    f: &dyn Fn(&Json, &Json) -> Option<Json>,
-) -> Result<Option<Json>, Error> {
-    let mut max_val = None;
-    for row in rows {
-        if let Some(val) = row.get(key) {
-            max_val = match max_val {
-                None => Some(val.clone()),
-                Some(cur_max) => {
-                    let val = f(&cur_max, val).ok_or(Error::BadSelect)?;
-                    Some(val)
-                }
-            }
-        }
-    }
-    Ok(max_val)
-}
-
-fn eval_aggregate_cmd(
-    key: &str,
-    rows: &[Json],
-    f: &dyn Fn(Option<Json>, &Json) -> Result<Option<Json>, Error>,
-) -> Result<Option<Json>, Error> {
-    let mut agg = None;
-    for row in rows {
-        if let Some(val) = row.get(key) {
-            agg = f(agg, val)?;
-        }
-    }
-    Ok(agg)
-}
-
-fn eval_max(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
-    eval_optima(key, rows, &json_max)
-}
-
-fn eval_min(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
-    eval_optima(key, rows, &json_min)
-}
-
 fn eval_agg<'a, A:'a>(key: &str, rows: &'a [Json], mut agg: A) -> Result<Option<Json>, Error> where A:Aggregate<'a> {
     for row in rows {
         if let Some(val) = row.get(key) {
@@ -416,27 +373,6 @@ fn eval_agg<'a, A:'a>(key: &str, rows: &'a [Json], mut agg: A) -> Result<Option<
         }
     }
     Ok(agg.apply())
-}
-
-pub fn json_aggregate_sum(x: Option<Json>, y: &Json) -> Result<Option<Json>, Error> {
-    match (x, y) {
-        (None, Json::Number(y)) => Ok(Some(Json::Number(y.clone()))),
-        (None, _) => Ok(None),
-        (Some(Json::Number(ref x)), Json::Number(y)) => {
-            let total = json_add_nums(x, y)?;
-            Ok(Some(total))
-        }
-        (Some(_), _) => Err(Error::BadType),
-    }
-}
-
-fn json_add_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
-    match (x.is_f64(), y.is_f64()) {
-        (true, true) | (true, false) | (false, true) => {
-            Ok(Json::from(x.as_f64().unwrap() + y.as_f64().unwrap()))
-        }
-        (false, false) => Ok(Json::from(x.as_i64().unwrap() + y.as_i64().unwrap())),
-    }
 }
 
 struct Query<'a> {

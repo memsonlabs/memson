@@ -71,47 +71,7 @@ trait GtLt {
         T: Ord;
 }
 
-fn json_optima<T>(x: &Json, y: &Json, f: T) -> Option<Json>
-where
-    T: GtLt,
-{
-    match (x, y) {
-        (Json::String(x), Json::String(y)) => {
-            let val = if f.apply(x, y) {
-                Json::String(x.to_string())
-            } else {
-                Json::String(y.to_string())
-            };
-            Some(val)
-        }
-        (Json::String(_), _) => None,
-        (Json::Number(x), Json::Number(y)) => {
-            let x = match x.as_i64() {
-                Some(val) => val,
-                None => return None,
-            };
-            let y = match y.as_i64() {
-                Some(val) => val,
-                None => return None,
-            };
-            Some(Json::from(if f.apply(x, y) { x } else { y }))
-        }
-        (Json::Number(x), _) => {
-            let x = match x.as_i64() {
-                Some(val) => val,
-                None => return None,
-            };
-            let y = match y.as_i64() {
-                Some(val) => val,
-                None => return None,
-            };
-            Some(Json::from(if f.apply(x, y) { x } else { y }))
-        }
-        (Json::Bool(x), Json::Bool(y)) => Some(Json::from(if f.apply(x, y) { *x } else { *y })),
-        (Json::Bool(_), _) => None,
-        _ => unimplemented!(),
-    }
-}
+
 struct Gt {}
 
 impl GtLt for Gt {
@@ -126,14 +86,6 @@ impl GtLt for Lt {
     fn apply<T: Ord>(&self, x: T, y: T) -> bool {
         x < y
     }
-}
-
-pub fn json_max(x: &Json, y: &Json) -> Option<Json> {
-    json_optima(x, y, Gt {})
-}
-
-pub fn json_min(x: &Json, y: &Json) -> Option<Json> {
-    json_optima(x, y, Lt {})
 }
 
 pub fn json_add_num(x: &Json, y: &JsonNum) -> Option<Json> {
