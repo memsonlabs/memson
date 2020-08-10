@@ -45,11 +45,11 @@ use tokio::net::TcpListener;
 use tokio::stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
+use crate::db::{Cmd, Db, Res};
 use futures::SinkExt;
 use std::env;
 use std::error::Error;
 use std::sync::{Arc, RwLock};
-use crate::db::{Cmd, Db, Res};
 
 mod db;
 mod json;

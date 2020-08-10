@@ -1,12 +1,33 @@
-
-
+use crate::db::{Error, Reply, Res};
 use serde_json::Number as JsonNum;
 use serde_json::Number;
 pub use serde_json::{Map, Value as Json};
 use std::cmp::PartialOrd;
 use std::mem;
-use crate::db::{Error, Reply, Res};
-use std::fs::OpenOptions;
+
+//TODO make generic comparison
+pub fn json_num_gt(x: &JsonNum, y: &JsonNum) -> Option<bool> {
+    match (x.is_i64(), y.is_i64()) {
+        (true, true) => {
+            let xv = x.as_i64().unwrap();
+            let yv = y.as_i64().unwrap();
+            Some(xv > yv)
+        }
+        _ => None,
+    }
+}
+
+//TODO make generic comparison
+pub fn json_num_lt(x: &JsonNum, y: &JsonNum) -> Option<bool> {
+    match (x.is_i64(), y.is_i64()) {
+        (true, true) => {
+            let xv = x.as_i64().unwrap();
+            let yv = y.as_i64().unwrap();
+            Some(xv < yv)
+        }
+        _ => None,
+    }
+}
 
 trait Compare {
     fn gt(&self) -> bool;
@@ -20,14 +41,14 @@ struct Cmp<T> {
     y: T,
 }
 
-impl <T:PartialOrd> Compare for Cmp<T> {
+impl<T: PartialOrd> Compare for Cmp<T> {
     fn gt(&self) -> bool {
         self.x > self.y
     }
 
     fn gte(&self) -> bool {
         self.x >= self.y
-    }    
+    }
 
     fn lt(&self) -> bool {
         self.x < self.y
@@ -35,26 +56,35 @@ impl <T:PartialOrd> Compare for Cmp<T> {
 
     fn lte(&self) -> bool {
         self.x <= self.y
-    }   
+    }
 }
 
-impl <T:PartialOrd> Cmp<T> {
+impl<T: PartialOrd> Cmp<T> {
     fn new(x: T, y: T) -> Cmp<T> {
         Self { x, y }
-    }  
+    }
 }
 
-pub fn json_max(x: &Json, y:&Json) -> Option<Json> {
+trait GtLt {
+    fn apply<T>(&self, x: T, y: T) -> bool
+    where
+        T: Ord;
+}
+
+fn json_optima<T>(x: &Json, y: &Json, f: T) -> Option<Json>
+where
+    T: GtLt,
+{
     match (x, y) {
         (Json::String(x), Json::String(y)) => {
-            let val = if x > y {
+            let val = if f.apply(x, y) {
                 Json::String(x.to_string())
             } else {
                 Json::String(y.to_string())
             };
             Some(val)
         }
-        (Json::String(x), _) => None,
+        (Json::String(_), _) => None,
         (Json::Number(x), Json::Number(y)) => {
             let x = match x.as_i64() {
                 Some(val) => val,
@@ -64,7 +94,7 @@ pub fn json_max(x: &Json, y:&Json) -> Option<Json> {
                 Some(val) => val,
                 None => return None,
             };
-            Some(Json::from(if x > y { x } else { y }))
+            Some(Json::from(if f.apply(x, y) { x } else { y }))
         }
         (Json::Number(x), _) => {
             let x = match x.as_i64() {
@@ -75,16 +105,35 @@ pub fn json_max(x: &Json, y:&Json) -> Option<Json> {
                 Some(val) => val,
                 None => return None,
             };
-            Some(Json::from(if x > y { x } else { y }))
+            Some(Json::from(if f.apply(x, y) { x } else { y }))
         }
-        (Json::Bool(x), Json::Bool(y)) => {
-            Some(Json::from(if x > y { *x } else { *y }))
-        }
-        (Json::Bool(x), _) => {
-            None
-        }
-        _ => unimplemented!()
+        (Json::Bool(x), Json::Bool(y)) => Some(Json::from(if f.apply(x, y) { *x } else { *y })),
+        (Json::Bool(_), _) => None,
+        _ => unimplemented!(),
     }
+}
+struct Gt {}
+
+impl GtLt for Gt {
+    fn apply<T: Ord>(&self, x: T, y: T) -> bool {
+        x > y
+    }
+}
+
+struct Lt {}
+
+impl GtLt for Lt {
+    fn apply<T: Ord>(&self, x: T, y: T) -> bool {
+        x < y
+    }
+}
+
+pub fn json_max(x: &Json, y: &Json) -> Option<Json> {
+    json_optima(x, y, Gt {})
+}
+
+pub fn json_min(x: &Json, y: &Json) -> Option<Json> {
+    json_optima(x, y, Lt {})
 }
 
 pub fn json_add_num(x: &Json, y: &JsonNum) -> Option<Json> {
@@ -117,7 +166,7 @@ pub fn json_neq(x: &Json, y: &Json) -> Option<bool> {
 
 fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> Option<bool> {
     match (x, y) {
-        (Json::String(x), Json::String(y)) =>  {
+        (Json::String(x), Json::String(y)) => {
             let cmp = Cmp::new(x, y);
             Some(p(&cmp))
         }
@@ -164,20 +213,18 @@ pub fn len(val: &Json) -> Json {
 pub fn append(val: &mut Json, elem: Json) {
     match val {
         Json::Array(ref mut arr) => {
-            arr.push(elem);            
+            arr.push(elem);
         }
-        Json::Object(ref mut obj) => {
-            match elem {
-                Json::Object(o) => {
-                    obj.extend(o);
-                }
-                _json => {
-                    let mut elem = Json::Array(Vec::new());
-                    mem::swap(&mut elem, val);
-                    append(val, elem);
-                }
+        Json::Object(ref mut obj) => match elem {
+            Json::Object(o) => {
+                obj.extend(o);
             }
-        }
+            _json => {
+                let mut elem = Json::Array(Vec::new());
+                mem::swap(&mut elem, val);
+                append(val, elem);
+            }
+        },
         val => {
             let arr = vec![val.clone(), elem];
             *val = Json::from(arr);
@@ -187,7 +234,7 @@ pub fn append(val: &mut Json, elem: Json) {
 
 pub fn first(val: &Json) -> Res<'_> {
     match val {
-        Json::Array(ref arr) => arr_first(arr),        
+        Json::Array(ref arr) => arr_first(arr),
         val => Ok(Reply::Ref(val)),
     }
 }
@@ -247,7 +294,7 @@ pub fn dev(val: &Json) -> Result<Json, Error> {
 
 pub fn max(val: &Json) -> Result<Json, Error> {
     match val {
-        Json::Array(ref arr) => arr_max(arr),        
+        Json::Array(ref arr) => arr_max(arr),
         val => Ok(val.clone()),
     }
 }
@@ -259,7 +306,7 @@ pub fn add(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
         (Json::Array(lhs), Json::Number(rhs)) => json_add_arr_num(lhs, rhs),
         (Json::Number(rhs), Json::Array(lhs)) => json_add_arr_num(lhs, rhs),
         (Json::Number(lhs), Json::Number(rhs)) => json_add_nums(lhs, rhs),
-        (Json::String(lhs), Json::String(rhs)) => json_add_str(lhs, rhs),    
+        (Json::String(lhs), Json::String(rhs)) => json_add_str(lhs, rhs),
         (Json::String(lhs), Json::Array(rhs)) => add_str_arr(lhs, rhs),
         (Json::Array(lhs), Json::String(rhs)) => add_arr_str(lhs, rhs),
         _ => Err(Error::BadType),
@@ -384,7 +431,7 @@ fn json_add_str(x: &str, y: &str) -> Result<Json, Error> {
     Ok(Json::String(val))
 }
 
-fn add_str_arr (x: &str, y: &[Json]) -> Result<Json, Error> {
+fn add_str_arr(x: &str, y: &[Json]) -> Result<Json, Error> {
     let mut arr = Vec::with_capacity(y.len());
     for e in y {
         arr.push(add_str_val(x, e)?);
@@ -406,7 +453,6 @@ fn add_val_str(x: &Json, y: &str) -> Result<Json, Error> {
     }
 }
 
-
 fn add_arr_str(lhs: &[Json], rhs: &str) -> Result<Json, Error> {
     let mut arr = Vec::with_capacity(lhs.len());
     for x in lhs {
@@ -416,7 +462,7 @@ fn add_arr_str(lhs: &[Json], rhs: &str) -> Result<Json, Error> {
 }
 
 //TODO(jaupe) add better error handlinge
-fn json_add_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error>{
+fn json_add_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error> {
     let arr: Vec<Json> = x
         .iter()
         .map(|x| Json::from(x.as_f64().unwrap() + y.as_f64().unwrap()))
@@ -424,7 +470,7 @@ fn json_add_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error>{
     Ok(Json::Array(arr))
 }
 
-fn json_add_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error>{
+fn json_add_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
     let vec = lhs
         .iter()
         .zip(rhs.iter())
@@ -433,12 +479,16 @@ fn json_add_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error>{
     Ok(Json::Array(vec))
 }
 
-fn json_add_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error>{
-    let val = x.as_f64().unwrap() + y.as_f64().unwrap();
-    Ok(Json::from(val))
+pub(crate) fn json_add_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
+    match (x.is_f64(), y.is_f64()) {
+        (true, true) | (true, false) | (false, true) => {
+            Ok(Json::from(x.as_f64().unwrap() + y.as_f64().unwrap()))
+        }
+        (false, false) => Ok(Json::from(x.as_i64().unwrap() + y.as_i64().unwrap())),
+    }
 }
 
-fn json_sub_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error>{
+fn json_sub_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error> {
     let arr = x
         .iter()
         .map(|x| Json::from(x.as_f64().unwrap() - y.as_f64().unwrap()))
@@ -446,7 +496,7 @@ fn json_sub_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error>{
     Ok(Json::Array(arr))
 }
 
-fn json_sub_num_arr(x: &JsonNum, y: &[Json]) -> Result<Json, Error>{
+fn json_sub_num_arr(x: &JsonNum, y: &[Json]) -> Result<Json, Error> {
     let arr = y
         .iter()
         .map(|y| Json::from(x.as_f64().unwrap() - y.as_f64().unwrap()))
@@ -454,7 +504,7 @@ fn json_sub_num_arr(x: &JsonNum, y: &[Json]) -> Result<Json, Error>{
     Ok(Json::Array(arr))
 }
 
-fn json_sub_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error>{
+fn json_sub_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
     let vec = lhs
         .iter()
         .zip(rhs.iter())
@@ -463,12 +513,12 @@ fn json_sub_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error>{
     Ok(Json::Array(vec))
 }
 
-fn json_sub_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error>{
+fn json_sub_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
     let val = x.as_f64().unwrap() - y.as_f64().unwrap();
     Ok(Json::from(val))
 }
 
-pub fn min(val: &Json) -> Result<Json, Error>{
+pub fn min(val: &Json) -> Result<Json, Error> {
     match val {
         Json::Number(val) => Ok(Json::Number(val.clone())),
         Json::Array(ref arr) => arr_min(arr),
@@ -476,7 +526,7 @@ pub fn min(val: &Json) -> Result<Json, Error>{
     }
 }
 
-fn json_arr_sum(s: &[Json]) -> Result<Json, Error>{
+fn json_arr_sum(s: &[Json]) -> Result<Json, Error> {
     let mut total = 0.0f64;
     for val in s {
         match val {
@@ -546,7 +596,7 @@ fn json_arr_dev(s: &[Json]) -> Result<Json, Error> {
     Ok(Json::Number(num))
 }
 
-fn json_f64(val: &Json) -> Option<f64> {
+pub fn json_f64(val: &Json) -> Option<f64> {
     match val {
         Json::Number(num) => num.as_f64(),
         _ => None,

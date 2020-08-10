@@ -51,7 +51,6 @@ pub enum ParseError {
     BadCmd,
 }
 
-
 impl Cmd {
     fn sum(key: String) -> Cmd {
         Cmd::Sum(key)
@@ -67,35 +66,35 @@ impl Cmd {
 
     fn max(key: String) -> Cmd {
         Cmd::Max(key)
-    }   
-    
+    }
+
     fn min(key: String) -> Cmd {
         Cmd::Min(key)
-    } 
-    
+    }
+
     fn avg(key: String) -> Cmd {
         Cmd::Avg(key)
-    }  
+    }
 
     fn dev(key: String) -> Cmd {
         Cmd::Dev(key)
-    } 
+    }
 
     fn first(key: String) -> Cmd {
         Cmd::First(key)
-    } 
+    }
 
     fn last(key: String) -> Cmd {
         Cmd::Last(key)
-    }    
-    
+    }
+
     fn var(key: String) -> Cmd {
         Cmd::Var(key)
-    } 
+    }
 
     fn pop(key: String) -> Cmd {
         Cmd::Pop(key)
-    }        
+    }
 
     pub fn parse_cmd(json: Json) -> Result<Cmd, ParseError> {
         serde_json::from_value(json).map_err(|_| ParseError::BadCmd)
@@ -134,12 +133,12 @@ impl Cmd {
             "max" => Self::parse_arg(arg, &Cmd::max),
             "min" => Self::parse_arg(arg, &Cmd::min),
             "len" => Self::parse_arg(arg, &Cmd::len),
-            "get" => Self::parse_arg(arg, &Cmd::get), 
+            "get" => Self::parse_arg(arg, &Cmd::get),
             _ => unimplemented!(),
         }
     }
 
-    fn parse_arg(arg: Json, f:&dyn Fn(String) -> Cmd) -> Result<Cmd, ParseError> {
+    fn parse_arg(arg: Json, f: &dyn Fn(String) -> Cmd) -> Result<Cmd, ParseError> {
         match arg {
             Json::String(key) => Ok(f(key)),
             val => return Err(ParseError::BadArgument(val)),
@@ -249,14 +248,6 @@ impl Db {
         let val = self.get_mut(key)?;
         append(val, arg);
         Ok(Reply::Update)
-    }
-
-    // TODO implement other types
-    pub fn eval_aggregate(&self, cmd: Cmd) -> Result<Json, Error> {
-        match cmd {
-            Cmd::Sum(key) => self.eval_sum(key),
-            _ => unimplemented!(),
-        }
     }
 
     pub fn eval_read_cmd(&self, cmd: Cmd) -> Res<'_> {
