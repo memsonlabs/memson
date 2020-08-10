@@ -546,7 +546,7 @@ pub mod tests {
 
     #[test]
     fn open_db() {
-        assert_eq!(12, len());
+        assert_eq!(11, len());
         assert_eq!(get("b"), Ok(Json::Bool(true)));
         assert_eq!(
             get("ia"),
@@ -667,7 +667,7 @@ pub mod tests {
 
     #[test]
     fn test_add() {
-        assert_eq!(Ok(Json::from(9.0)), add("x", "y"));
+        assert_eq!(Ok(Json::from(9)), add("x", "y"));
         assert_eq!(
             Ok(Json::from(vec![
                 Json::from(5.0),

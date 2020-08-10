@@ -389,7 +389,6 @@ impl<'a> Query<'a> {
         let rows = self.eval_from()?;
         if let Some(ref filter) = self.cmd.filter {
             let filtered_rows = self.eval_where(rows, filter.clone())?;
-            println!("filtered_rows = {:?}", filtered_rows);
             self.eval_select(&filtered_rows)
         } else {
             self.eval_select(rows)
@@ -422,8 +421,7 @@ impl<'a> Query<'a> {
             Some(Json::Array(ref selects)) => self.eval_selects(selects, rows),
             Some(Json::String(s)) => self.eval_selects(&vec![Json::from(s.to_string())], rows),
             Some(Json::Object(obj)) => self.eval_obj_selects(obj.clone(), rows),
-            Some(val) => {
-                println!("bad select = {:?}", val);
+            Some(_) => {
                 Err(Error::BadSelect)
             }
             None => self.eval_select_all(rows),
@@ -434,11 +432,9 @@ impl<'a> Query<'a> {
         let mut out = JsonObj::new();
         for (key, val) in obj {
             let cmd = Cmd::parse_cmd(val).map_err(|_| Error::BadSelect)?;
-            println!("cmd={:?}", cmd);
             if let Some(val) = eval_aggregate(cmd, rows)? {
                 out.insert(key, val);
             }
-            println!("out={:?}", out);
         }
         Ok(Json::Object(out))
     }

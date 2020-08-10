@@ -323,7 +323,6 @@ fn mul_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
 }
 
 pub fn div(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
-    println!("{:?}, {:?}", lhs, rhs);
     match (lhs, rhs) {
         (Json::Array(ref lhs), Json::Array(ref rhs)) => div_arrs(lhs, rhs),
         (Json::Array(ref lhs), Json::Number(ref rhs)) => div_arr_num(lhs, rhs),
@@ -432,11 +431,9 @@ fn json_add_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
 }
 
 pub(crate) fn json_add_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
-    match (x.is_f64(), y.is_f64()) {
-        (true, true) | (true, false) | (false, true) => {
-            Ok(Json::from(x.as_f64().unwrap() + y.as_f64().unwrap()))
-        }
-        (false, false) => Ok(Json::from(x.as_i64().unwrap() + y.as_i64().unwrap())),
+    match (x.is_i64(), y.is_i64()) {
+        (true, true) => Ok(Json::from(x.as_i64().unwrap() + y.as_i64().unwrap())),
+        _ => Ok(Json::from(x.as_f64().unwrap() + y.as_f64().unwrap()))
     }
 }
 
