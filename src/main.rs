@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // structure. Note the usage of `Arc` here which will be used to ensure that
     // each independently spawned client will have a reference to the in-memory
     // database.
-    let initial_db = Db::open("memson").unwrap();
+    let initial_db = Db::new();
     let db = Arc::new(DbServer {
         db: RwLock::new(initial_db),
     });

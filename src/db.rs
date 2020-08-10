@@ -217,31 +217,12 @@ pub type Res<'a> = Result<Reply<'a>, Error>;
 
 #[derive(Debug)]
 pub struct Db {
-    pub cache: BTreeMap<String, Json>,
-    store: sled::Db,
+    cache: BTreeMap<String, Json>,
 }
 
 impl Db {
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Db, Error> {
-        let store = sled::open(path).expect("cannot open db");
-        let mut cache = BTreeMap::new();
-        println!("len = {:?}", store.len());
-        for r in store.iter() {
-            match r {
-                Ok((key, val)) => {
-                    let key: String = unsafe { String::from_utf8_unchecked(key.to_vec()) };
-                    println!("key = {:?}", key);
-                    let val: Json = match serde_json::from_slice(&val) {
-                        Ok(val) => val,
-                        Err(_) => return Err(Error::BadIO),
-                    };
-                    println!("val = {:?}", val);
-                    cache.insert(key, val);
-                }
-                Err(_) => return Err(Error::BadIO),
-            }
-        }
-        Ok(Self { cache, store })
+    pub fn new() -> Self {
+        Db { cache: BTreeMap::new() }
     }
 
     fn eval_append(&mut self, key: String, arg: Json) -> Res<'_> {
@@ -353,17 +334,6 @@ impl Db {
     }
 
     fn eval_set(&mut self, key: String, val: Json) -> Res<'_> {
-        let vec = match serde_json::to_vec(&val) {
-            Ok(vec) => vec,
-            Err(_) => return Err(Error::BadIO),
-        };
-        if let Err(_) = self.store.insert(&key, vec) {
-            return Err(Error::BadIO);
-        }
-        match self.store.flush() {
-            Ok(n) => println!("written {} bytes to disk", n),
-            Err(_) => return Err(Error::BadIO),
-        };
         let reply = if let Some(_) = self.cache.insert(key, val) {
             Reply::Update
         } else {
@@ -429,14 +399,12 @@ pub mod tests {
     pub fn insert<K: Into<String>, V: Into<Json>>(db: &mut Db, key: K, val: V) {
         let key = key.into();
         let val = val.into();
-        db.store.insert(&key, val.to_string().as_bytes()).unwrap();
-        db.store.flush().unwrap();
         db.cache.insert(key, val);
     }
 
     lazy_static! {
         static ref DB: RwLock<Db> = {
-            let mut db = Db::open("test").unwrap();
+            let mut db = Db::new();
             insert(
                 &mut db,
                 "a",

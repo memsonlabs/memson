@@ -573,7 +573,7 @@ mod tests {
 
     lazy_static! {
         static ref DB: RwLock<Db> = {
-            let mut db = Db::open("query").unwrap();
+            let mut db = Db::new();
             insert(
                 &mut db,
                 "t",
