@@ -2,25 +2,87 @@ use crate::db::{Cmd, Db};
 
 use crate::json::*;
 use serde::{Deserialize, Serialize};
+use serde_json::map::Entry;
 use serde_json::{Map, Value as Json};
 
+struct Aggregation {
+    col_name: String,
+    data: Option<JsonObj>
+}
+
+trait KeyAggregate {
+    fn push(&mut self, by: &str, row: &Json) -> Result<(), Error>;
+    fn aggregate(self: Box<Self>) -> Aggregation;
+
+}
+
 trait Aggregate<'a> {
-    fn aggregate(&mut self, val:&'a Json) -> Result<(), Error>;
+    fn aggregate(&mut self, val: &'a Json) -> Result<(), Error>;
     fn apply(self) -> Option<Json>;
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
+struct Get {
+    col_name: String,
+    key: String,
+    map: Option<JsonObj>,
+}
+
+impl Get {
+    fn new(col_name: String, key: String) -> Self {
+        Self { col_name, key, map: None }
+    }
+}
+
+fn add_to_entry(entry: Entry<'_>, val: Json) {
+    match entry {
+        Entry::Vacant(entry) => {
+            entry.insert(val);
+        }
+        Entry::Occupied(entry) => {
+            json_push(entry.into_mut(), val);
+        }
+    }
+}
+
+impl KeyAggregate for Get {
+    fn push(&mut self, by: &str, row: &Json) -> Result<(), Error> {
+        let by_key = by.to_string();
+        let val = match row.get(&self.key) {
+            Some(val) => val.clone(),
+            None => return Ok(()),
+        };
+        match self.map {
+            None => {
+                let mut map = Map::new();
+                map.insert(by_key, val);
+                self.map = Some(map);
+            }
+            Some(ref mut agg) => {
+                let entry = agg.entry(by_key);
+                add_to_entry(entry, val)
+            }
+        };
+        Ok(())
+    }
+
+    fn aggregate(self: Box<Self>) -> Aggregation {
+        Aggregation { col_name: self.col_name, data:self.map }
+    }
+}
+
+#[derive(Debug, Default)]
 struct Last<'a> {
     val: Option<&'a Json>,
 }
 
-impl <'a> Last<'a> {
+impl<'a> Last<'a> {
     fn new() -> Self {
         Self::default()
     }
 }
 
-impl <'a> Aggregate<'a> for Last<'a> {
+impl<'a> Aggregate<'a> for Last<'a> {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         self.val = Some(val);
         Ok(())
@@ -31,18 +93,18 @@ impl <'a> Aggregate<'a> for Last<'a> {
     }
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 struct First<'a> {
     val: Option<&'a Json>,
 }
 
-impl <'a> First<'a> {
+impl<'a> First<'a> {
     fn new() -> Self {
         Self::default()
     }
 }
 
-impl <'a> Aggregate<'a> for First<'a> {
+impl<'a> Aggregate<'a> for First<'a> {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         if self.val.is_none() {
             self.val = Some(val);
@@ -55,7 +117,7 @@ impl <'a> Aggregate<'a> for First<'a> {
     }
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 struct Sum {
     total: Option<Json>,
 }
@@ -66,7 +128,7 @@ impl Sum {
     }
 }
 
-impl <'a> Aggregate<'a> for Sum {
+impl<'a> Aggregate<'a> for Sum {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         self.total = match (&self.total, val) {
             (None, Json::Number(val)) => Some(Json::Number(val.clone())),
@@ -85,28 +147,36 @@ impl <'a> Aggregate<'a> for Sum {
     }
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 struct Min<'a> {
     min: Option<&'a Json>,
 }
 
-impl <'a> Min<'a> {
+impl<'a> Min<'a> {
     fn new() -> Self {
         Self::default()
     }
 }
 
-impl <'a> Aggregate<'a> for Min<'a> {
+impl<'a> Aggregate<'a> for Min<'a> {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         self.min = match (&self.min, val) {
             (None, val) => Some(val),
             (Some(Json::String(y)), Json::String(x)) => {
-                if x < y {Some(val)} else { self.min }
+                if x < y {
+                    Some(val)
+                } else {
+                    self.min
+                }
             }
             (Some(Json::String(_)), _) => return Err(Error::BadType),
             (Some(Json::Number(x)), Json::Number(y)) => {
                 let r = json_num_lt(x, y).ok_or(Error::BadType)?;
-                if r { self.min } else { Some(val) }
+                if r {
+                    self.min
+                } else {
+                    Some(val)
+                }
             }
             _ => unimplemented!(),
         };
@@ -118,12 +188,12 @@ impl <'a> Aggregate<'a> for Min<'a> {
     }
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 struct Max<'a> {
     max: Option<&'a Json>,
 }
 
-impl <'a> Max<'a> {
+impl<'a> Max<'a> {
     fn new() -> Self {
         Max::default()
     }
@@ -131,33 +201,41 @@ impl <'a> Max<'a> {
     fn update(&mut self, val: &'a Json) {
         self.max = Some(val);
     }
-
-
 }
 
-impl <'a> Aggregate<'a> for Max<'a> {
+impl<'a> Aggregate<'a> for Max<'a> {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         let max = match self.max {
-                Some(max) => {
-                    match (max, val) {
-                        (Json::String(x), Json::String(y)) => {
-                            if y > x { val } else { max }
-                        }
-                        (Json::String(_), _) => return Err(Error::BadType),
-                        (Json::Number(x), Json::Number(y)) => {
-                            let r = json_num_gt(y, x).ok_or(Error::BadType)?;
-                            if r { val } else { max }
-                        }
-                        (Json::Bool(x), Json::Bool(y)) => {
-                            if y > x { val} else { max }
-                        }
-                        _ => unimplemented!(),
+            Some(max) => match (max, val) {
+                (Json::String(x), Json::String(y)) => {
+                    if y > x {
+                        val
+                    } else {
+                        max
                     }
                 }
-                None => val,
-            };
-            self.update(max);
-            Ok(())
+                (Json::String(_), _) => return Err(Error::BadType),
+                (Json::Number(x), Json::Number(y)) => {
+                    let r = json_num_gt(y, x).ok_or(Error::BadType)?;
+                    if r {
+                        val
+                    } else {
+                        max
+                    }
+                }
+                (Json::Bool(x), Json::Bool(y)) => {
+                    if y > x {
+                        val
+                    } else {
+                        max
+                    }
+                }
+                _ => unimplemented!(),
+            },
+            None => val,
+        };
+        self.update(max);
+        Ok(())
     }
 
     fn apply(self) -> Option<Json> {
@@ -165,36 +243,39 @@ impl <'a> Aggregate<'a> for Max<'a> {
     }
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 struct Var {
     total: f64,
     mean: f64,
     count: usize,
 }
 
-
 impl Var {
     fn from(mean: f64, count: usize) -> Self {
-        Var { total: 0.0, mean, count}
+        Var {
+            total: 0.0,
+            mean,
+            count,
+        }
     }
 }
 
-impl <'a> Aggregate<'a> for Var {
+impl<'a> Aggregate<'a> for Var {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         let mut val = val.as_f64().ok_or(Error::BadType)?;
         val = val - self.mean;
-        val = val * val;  //square the diff
+        val = val * val; //square the diff
         self.total += val;
         Ok(())
     }
 
     fn apply(self) -> Option<Json> {
-        let var = self.total / ((self.count - 1)as f64);
+        let var = self.total / ((self.count - 1) as f64);
         Some(Json::from(var))
     }
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 struct Avg {
     total: f64,
     count: usize,
@@ -210,7 +291,7 @@ impl Avg {
     }
 }
 
-impl <'a> Aggregate<'a> for Avg {
+impl<'a> Aggregate<'a> for Avg {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         self.total += json_f64(val).ok_or(Error::BadType)?;
         self.count += 1;
@@ -234,6 +315,7 @@ pub struct QueryCmd {
     #[serde(rename = "select")]
     selects: Option<Json>,
     from: String,
+    by: Option<Json>,
     #[serde(rename = "where")]
     filter: Option<Filter>,
 }
@@ -247,6 +329,7 @@ impl QueryCmd {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
+    BadKey,
     BadFrom,
     BadSelect,
     BadObject,
@@ -340,7 +423,7 @@ fn eval_aggregate(cmd: Cmd, rows: &[Json]) -> Result<Option<Json>, Error> {
     }
 }
 
-fn eval_nonaggregate(cmds: &[(String,Cmd)], rows: &[Json]) -> Result<Json, Error> {
+fn eval_nonaggregate(cmds: &[(String, Cmd)], rows: &[Json]) -> Result<Json, Error> {
     let mut out = Vec::new();
     for row in rows {
         let mut obj = None;
@@ -354,7 +437,7 @@ fn eval_nonaggregate(cmds: &[(String,Cmd)], rows: &[Json]) -> Result<Json, Error
     Ok(Json::Array(out))
 }
 
-fn eval_row(out: &mut Option<JsonObj>, cmd: &(String,Cmd), row:&Json) -> Result<(), Error> {
+fn eval_row(out: &mut Option<JsonObj>, cmd: &(String, Cmd), row: &Json) -> Result<(), Error> {
     match (&cmd.1, row) {
         (Cmd::Get(key), Json::Object(obj)) => {
             if let Some(val) = obj.get(key) {
@@ -402,7 +485,10 @@ fn eval_dev(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
     Ok(r)
 }
 
-fn eval_agg<'a, A:'a>(key: &str, rows: &'a [Json], mut agg: A) -> Result<Option<Json>, Error> where A:Aggregate<'a> {
+fn eval_agg<'a, A: 'a>(key: &str, rows: &'a [Json], mut agg: A) -> Result<Option<Json>, Error>
+where
+    A: Aggregate<'a>,
+{
     for row in rows {
         if let Some(val) = row.get(key) {
             agg.aggregate(val)?;
@@ -417,7 +503,7 @@ struct Query<'a> {
 }
 
 fn is_aggregation(cmds: &[(String, Cmd)]) -> bool {
-    for (_,cmd) in cmds {
+    for (_, cmd) in cmds {
         if !cmd.is_aggregate() {
             return false;
         }
@@ -462,15 +548,89 @@ impl<'a> Query<'a> {
 
     // TODO remove cloning
     fn eval_select(&self, rows: &[Json]) -> Result<Json, Error> {
-        match &self.cmd.selects {
-            Some(Json::Array(ref selects)) => self.eval_selects(selects, rows),
-            Some(Json::String(s)) => self.eval_selects(&vec![Json::from(s.to_string())], rows),
-            Some(Json::Object(obj)) => self.eval_obj_selects(obj.clone(), rows),
-            Some(_) => {
-                Err(Error::BadSelect)
+        if let Some(by) = &self.cmd.by {
+            self.eval_keyed_select(by, rows)
+        } else {
+            match &self.cmd.selects {
+                Some(Json::Array(ref selects)) => self.eval_selects(selects, rows),
+                Some(Json::String(s)) => self.eval_selects(&vec![Json::from(s.to_string())], rows),
+                Some(Json::Object(obj)) => self.eval_obj_selects(obj.clone(), rows),
+                Some(_) => Err(Error::BadSelect),
+                None => self.eval_select_all(rows),
             }
-            None => self.eval_select_all(rows),
         }
+    }
+
+    fn parse_aggregators(&self) -> Result<Option<Vec<Box<dyn KeyAggregate>>>, Error> {
+        if let Some(selects) = &self.cmd.selects {
+            let mut aggs: Vec<Box<dyn KeyAggregate>> = Vec::new();
+            match selects {
+                Json::Object(obj) => {
+                    for (k,v) in obj {
+                        match v {
+                            Json::String(s) => {
+                                aggs.push(Box::new(Get::new(k.to_string(), s.to_string())));
+                            },
+                            Json::Object(obj) => {
+                                for (cmd, arg) in obj {
+                                    match cmd.as_ref() {
+                                        "get" => {
+                                            match arg {
+                                                Json::String(key) => {
+                                                    aggs.push(Box::new(Get::new(k.to_string(), key.to_string())));
+                                                }
+                                                _ => unimplemented!(),
+                                            }
+                                        }
+                                        _ => unimplemented!(),
+                                    }
+                                }
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                }
+                _ => unimplemented!(),
+            };
+            Ok(Some(aggs))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn eval_keyed_select(&self, by: &Json, rows: &[Json]) -> Result<Json, Error> {
+        let mut aggs = self.parse_aggregators()?.unwrap(); // TODO remove unwrap
+        let by_key: &str = match by {
+            Json::String(s) => s.as_ref(),
+            _ => unimplemented!(),
+        };
+        for row in rows {
+            match row.get(by_key) {
+                Some(key) => {
+                    let key = json_to_string(key).ok_or(Error::BadKey)?;
+                    for agg in aggs.iter_mut() {
+                        agg.push(&key, row)?;
+                    }
+                }
+                None => continue,
+            }
+        }
+        let mut data = JsonObj::new();
+        for agg in aggs.into_iter() {
+            let a = agg.aggregate(); //TODO remove this clone
+            if let Some(obj) = a.data {
+                for (key, agg) in obj {
+                    let entry = data.entry(key).or_insert_with(|| Json::from(JsonObj::new()));
+                    match entry {
+                        Json::Object(ref mut obj) => {
+                            obj.insert(a.col_name.clone(), agg);
+                        },
+                        _ => unimplemented!(),
+                    }
+                }
+            }
+        }
+        Ok(Json::Object(data))
     }
 
     fn eval_obj_selects(&self, obj: JsonObj, rows: &[Json]) -> Result<Json, Error> {
@@ -484,7 +644,7 @@ impl<'a> Query<'a> {
         }
         if is_aggregation(&cmds) {
             let mut out = JsonObj::new();
-            for (key,cmd) in cmds {
+            for (key, cmd) in cmds {
                 if let Some(val) = eval_aggregate(cmd, rows)? {
                     out.insert(key, val);
                 }
@@ -584,10 +744,10 @@ mod tests {
     #[test]
     fn select_all_query() {
         let qry = query(json!({"from": "t"}));
-        let val = Json::from(vec![
-            json!({"_id": 0, "name": "james", "age": 35}),
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
-            json!({"_id": 2, "name": "misha", "age": 10}),
+        let val = json!([
+            {"_id": 0, "name": "james", "age": 35},
+            {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"},
+            {"_id": 2, "name": "misha", "age": 10},
         ]);
         assert_eq!(Ok(val), qry.eval());
     }
@@ -595,20 +755,20 @@ mod tests {
     #[test]
     fn select_1_prop_query() {
         let qry = query(json!({"select": "name", "from": "t"}));
-        let val = Json::from(vec![
-            json!({"_id": 0, "name": "james"}),
-            json!({"_id": 1, "name": "ania"}),
-            json!({"_id": 2, "name": "misha"}),
+        let val = json!([
+            {"_id": 0, "name": "james"},
+            {"_id": 1, "name": "ania"},
+            {"_id": 2, "name": "misha"},
         ]);
         assert_eq!(Ok(val), qry.eval());
     }
     #[test]
     fn select_3_prop_query() {
         let qry = query(json!({"select": ["name", "age", "job"], "from": "t"}));
-        let val = Json::from(vec![
-            json!({"_id": 0, "name": "james", "age": 35}),
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
-            json!({"_id": 2, "name": "misha", "age": 10}),
+        let val = json!([
+            {"_id": 0, "name": "james", "age": 35},
+            {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"},
+            {"_id": 2, "name": "misha", "age": 10},
         ]);
         assert_eq!(Ok(val), qry.eval());
     }
@@ -616,16 +776,16 @@ mod tests {
     #[test]
     fn select_all_where_eq_query() {
         let qry = query(json!({"from": "t", "where": {"==": ["name", "james"]}}));
-        let val = Json::from(vec![json!({"_id": 0, "name": "james", "age": 35})]);
+        let val = json!([{"_id": 0, "name": "james", "age": 35}]);
         assert_eq!(Ok(val), qry.eval());
     }
 
     #[test]
     fn select_all_where_neq_query_ok() {
         let qry = query(json!({"from": "t", "where": {"!=": ["name", "james"]}}));
-        let val = Json::from(vec![
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
-            json!({"_id": 2, "name": "misha", "age": 10}),
+        let val = json!([
+            {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"},
+            {"_id": 2, "name": "misha", "age": 10},
         ]);
         assert_eq!(Ok(val), qry.eval());
     }
@@ -633,9 +793,9 @@ mod tests {
     #[test]
     fn select_all_where_gt_query_ok() {
         let qry = query(json!({"from": "t", "where": {">": ["age", 20]}}));
-        let val = Json::from(vec![
-            json!({"_id": 0, "name": "james", "age": 35}),
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
+        let val = json!([
+            {"_id": 0, "name": "james", "age": 35},
+            {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"},
         ]);
         assert_eq!(Ok(val), qry.eval());
     }
@@ -643,16 +803,16 @@ mod tests {
     #[test]
     fn select_all_where_lt_query_ok() {
         let qry = query(json!({"from": "t", "where": {"<": ["age", 20]}}));
-        let val = Json::from(vec![json!({"_id": 2, "name": "misha", "age": 10})]);
+        let val = json!([{"_id": 2, "name": "misha", "age": 10}]);
         assert_eq!(Ok(val), qry.eval());
     }
 
     #[test]
     fn select_all_where_lte_query_ok() {
         let qry = query(json!({"from": "t", "where": {"<=": ["age", 28]}}));
-        let val = Json::from(vec![
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
-            json!({"_id": 2, "name": "misha", "age": 10}),
+        let val = json!([
+            {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"},
+            {"_id": 2, "name": "misha", "age": 10},
         ]);
         assert_eq!(Ok(val), qry.eval());
     }
@@ -660,9 +820,9 @@ mod tests {
     #[test]
     fn select_all_where_gte_query_ok() {
         let qry = query(json!({"from": "t", "where": {">=": ["age", 28]}}));
-        let val = Json::from(vec![
-            json!({"_id": 0, "name": "james", "age": 35}),
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
+        let val = json!([
+            {"_id": 0, "name": "james", "age": 35},
+            {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}
         ]);
 
         assert_eq!(Ok(val), qry.eval());
@@ -677,9 +837,7 @@ mod tests {
                 {"==": ["name", "ania"]}
             ]}
         }));
-        let val = Json::from(vec![
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
-        ]);
+        let val = json!([{"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}]);
         assert_eq!(Ok(val), qry.eval());
     }
 
@@ -689,7 +847,7 @@ mod tests {
             "select": {"totalAge": {"sum": "age"}},
             "from": "t"
         }));
-        let val = Json::from(json!({"totalAge": 73}));
+        let val = json!({"totalAge": 73});
         assert_eq!(Ok(val), qry.eval());
     }
 
@@ -701,7 +859,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = Json::from(json!({"maxAge": 35}));
+        let val = json!({"maxAge": 35});
         assert_eq!(Ok(val), qry.eval());
     }
 
@@ -713,7 +871,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = Json::from(json!({"maxName": "misha"}));
+        let val = json!({"maxName": "misha"});
         assert_eq!(Ok(val), qry.eval());
     }
 
@@ -725,7 +883,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = Json::from(json!({"minAge": 10}));
+        let val = json!({"minAge": 10});
         assert_eq!(Ok(val), qry.eval());
     }
 
@@ -805,7 +963,10 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!([{"_id": 0,"age":35}, {"_id": 1, "age": 28}])), qry.eval());
+        assert_eq!(
+            Ok(json!([{"_id": 0,"age":35}, {"_id": 1, "age": 28}])),
+            qry.eval()
+        );
     }
 
     #[test]
@@ -839,11 +1000,14 @@ mod tests {
             "select": {},
             "from": "t",
         }));
-        assert_eq!(Ok(json!([
-            json!({"_id": 0, "name": "james", "age": 35}),
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
-            json!({"_id": 2, "name": "misha", "age": 10}),
-        ])), qry.eval());
+        assert_eq!(
+            Ok(json!([
+                {"_id": 0, "name": "james", "age": 35},
+                {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"},
+                {"_id": 2, "name": "misha", "age": 10},
+            ])),
+            qry.eval()
+        );
     }
 
     #[test]
@@ -853,9 +1017,83 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!([
-            json!({"_id": 0, "name": "james", "age": 35}),
-            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
-        ])), qry.eval());
+        assert_eq!(
+            Ok(json!([
+                {"_id": 0, "name": "james", "age": 35},
+                {"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"},
+            ])),
+            qry.eval()
+        );
+    }
+
+    #[test]
+    fn select_age_by_name() {
+        let qry = query(json!({
+            "select": {
+                "age": {"get": "age"},
+            },
+            "from": "t",
+            "by": "name",
+        }));
+        assert_eq!(
+            Ok(json!({
+                "misha": {"age": 10},
+                "ania": {"age": 28},
+                "james": {"age": 35}
+            })),
+            qry.eval()
+        );
+    }
+
+    #[test]
+    fn select_name_by_age() {
+        let qry = query(json!({
+            "select": {
+                "name": {"get": "name"},
+            },
+            "from": "t",
+            "by": "age",
+        }));
+        assert_eq!(
+            Ok(json!([
+                {"10": {"name": "misha"}},
+                {"28": {"name": "ania"}},
+                {"35": {"name": "james"}}
+            ])),
+            qry.eval()
+        );
+    }
+
+    #[test]
+    fn select_age_by_name_where_age_gt_20() {
+        let qry = query(json!({
+            "select": {
+                "age": {"get": "age"},
+            },
+            "from": "t",
+            "by": "name",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(Ok(json!({"ania": {"age":28}, "james": {"age": 35}})), qry.eval());
+    }
+
+    #[test]
+    fn select_age_job_by_name_where_age_gt_20() {
+        let qry = query(json!({
+            "select": {
+                "age": {"get": "age"},
+                "job": {"get": "job"},
+            },
+            "from": "t",
+            "by": "name",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(
+            Ok(json!({
+                "ania": {"age": 28, "job": "English Teacher"},
+                "james": {"age": 35},
+            })),
+            qry.eval()
+        );
     }
 }

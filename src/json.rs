@@ -1,7 +1,7 @@
 use crate::db::{Error, Reply, Res};
 use serde_json::Number as JsonNum;
 use serde_json::Number;
-pub use serde_json::{Map, Value as Json};
+pub use serde_json::{json, Map, Value as Json};
 use std::cmp::PartialOrd;
 use std::mem;
 
@@ -70,7 +70,6 @@ trait GtLt {
     where
         T: Ord;
 }
-
 
 struct Gt {}
 
@@ -433,7 +432,7 @@ fn json_add_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
 pub(crate) fn json_add_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
     match (x.is_i64(), y.is_i64()) {
         (true, true) => Ok(Json::from(x.as_i64().unwrap() + y.as_i64().unwrap())),
-        _ => Ok(Json::from(x.as_f64().unwrap() + y.as_f64().unwrap()))
+        _ => Ok(Json::from(x.as_f64().unwrap() + y.as_f64().unwrap())),
     }
 }
 
@@ -882,6 +881,27 @@ fn eval_min(arg: Cmd, db: &mut Database) -> Res {
 
 */
 
+pub fn json_push(to: &mut Json, val: Json) {
+    match to {
+        Json::Array(ref mut arr) => {
+            arr.push(val);
+        }
+        val => {
+            //TODO optimize this to not clone the val
+            *val = Json::from(vec![val.clone()])
+        }
+    };
+}
+
+pub fn json_to_string(val: &Json) -> Option<String> {
+    match val {
+        Json::String(s) => Some(s.to_string()),
+        Json::Array(_) | Json::Object(_) | Json::Null => None,
+        Json::Number(n) => Some(n.to_string()),
+        Json::Bool(b) => Some(b.to_string()),
+    }
+}
+
 #[test]
 fn append_obj_ok() {
     use serde_json::json;
@@ -889,4 +909,12 @@ fn append_obj_ok() {
     let elem = json!({"age": 45});
     append(&mut obj, elem);
     assert_eq!(obj, json!({"name": "james", "age": 45}));
+}
+
+#[test]
+fn json_str_to_string() {
+    use serde_json::json;
+    let val = json!("abc");
+
+    assert_eq!(json_to_string(&val), Some(String::from("abc")));
 }

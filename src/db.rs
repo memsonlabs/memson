@@ -167,7 +167,15 @@ impl Cmd {
 
     pub fn is_aggregate(&self) -> bool {
         match self {
-            Cmd::Avg(_) | Cmd::Count(_) | Cmd::Max(_) | Cmd::First(_) | Cmd::Min(_) | Cmd::Dev(_) | Cmd::Last(_) | Cmd::Sum(_) | Cmd::Var(_) => true,
+            Cmd::Avg(_)
+            | Cmd::Count(_)
+            | Cmd::Max(_)
+            | Cmd::First(_)
+            | Cmd::Min(_)
+            | Cmd::Dev(_)
+            | Cmd::Last(_)
+            | Cmd::Sum(_)
+            | Cmd::Var(_) => true,
             _ => false,
         }
     }
@@ -226,7 +234,9 @@ pub struct Db {
 
 impl Db {
     pub fn new() -> Self {
-        Db { cache: BTreeMap::new() }
+        Db {
+            cache: BTreeMap::new(),
+        }
     }
 
     fn eval_append(&mut self, key: String, arg: Json) -> Res<'_> {
