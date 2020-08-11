@@ -886,9 +886,9 @@ pub fn json_push(to: &mut Json, val: Json) {
         Json::Array(ref mut arr) => {
             arr.push(val);
         }
-        val => {
+        v => {
             //TODO optimize this to not clone the val
-            *val = Json::from(vec![val.clone()])
+            *v = Json::from(vec![v.clone(), val])
         }
     };
 }
