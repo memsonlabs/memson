@@ -474,7 +474,9 @@ impl<'a> Query<'a> {
     }
 
     fn eval_obj_selects(&self, obj: JsonObj, rows: &[Json]) -> Result<Json, Error> {
-
+        if obj.is_empty() {
+            return self.eval_select_all(rows);
+        }
         let mut cmds = Vec::new();
         for (key, val) in obj {
             let cmd = Cmd::parse_cmd(val).map_err(|_| Error::BadSelect)?;
@@ -829,5 +831,31 @@ mod tests {
             "where": {">": ["age", 20]}
         }));
         assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry.eval());
+    }
+
+    #[test]
+    fn select_empty_obj() {
+        let qry = query(json!({
+            "select": {},
+            "from": "t",
+        }));
+        assert_eq!(Ok(json!([
+            json!({"_id": 0, "name": "james", "age": 35}),
+            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
+            json!({"_id": 2, "name": "misha", "age": 10}),
+        ])), qry.eval());
+    }
+
+    #[test]
+    fn select_empty_obj_where_age_gt_20() {
+        let qry = query(json!({
+            "select": {},
+            "from": "t",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(Ok(json!([
+            json!({"_id": 0, "name": "james", "age": 35}),
+            json!({"_id": 1, "name": "ania", "age": 28, "job": "English Teacher"}),
+        ])), qry.eval());
     }
 }
