@@ -543,7 +543,6 @@ impl<'a> Query<'a> {
                 Some(by_val) => {
                     let obj: JsonObj = if let Some(ids) = &ids {
                         let mut obj = Map::new();
-                        obj.insert("_id".to_string(), row.get("_id").unwrap().clone());
                         for id in ids {
                             if let Some(val) = row.get(id) {
                                 obj.insert(id.clone(), val.clone());
@@ -989,9 +988,9 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({
-                "misha": [{"_id": 2, "age": 10}],
-                "ania": [{"_id": 1, "age": 28}, {"_id": 3, "age": 20}],
-                "james": [{"_id": 0, "age": 35}],
+                "misha": [{"age": 10}],
+                "ania": [{"age": 28}, {"age": 20}],
+                "james": [{"age": 35}],
             })),
             qry
         );
@@ -1008,10 +1007,10 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({
-                "10": [{"_id": 2, "name": "misha"}],
-                "20": [{"_id": 3, "name": "ania"}],
-                "28": [{"_id": 1, "name": "ania"}],
-                "35": [{"_id": 0, "name": "james"}],
+                "10": [{"name": "misha"}],
+                "20": [{"name": "ania"}],
+                "28": [{"name": "ania"}],
+                "35": [{"name": "james"}],
             })),
             qry
         );
@@ -1028,7 +1027,7 @@ mod tests {
             "where": {">": ["age", 20]}
         }));
         assert_eq!(
-            Ok(json!({"ania": [{"_id": 1, "age":28}], "james": [{"_id": 0, "age": 35}]})),
+            Ok(json!({"ania": [{"age":28}], "james": [{"age": 35}]})),
             qry
         );
     }
@@ -1046,8 +1045,8 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({
-                "ania": [{"_id": 1, "age": 28, "job": "english teacher"}],
-                "james": [{"_id": 0, "age": 35}],
+                "ania": [{"age": 28, "job": "english teacher"}],
+                "james": [{"age": 35}],
             })),
             qry
         );
