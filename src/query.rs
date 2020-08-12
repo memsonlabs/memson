@@ -652,35 +652,36 @@ fn add_row_id(row: &Json, i: usize) -> Result<Json, Error> {
 mod tests {
     use super::*;
 
-    use lazy_static::lazy_static;
     use serde_json::json;
-    use std::sync::{RwLock, RwLockReadGuard};
 
     fn insert<K:Into<String>>(db: &mut Db, key: K, val: Json) {
         db.eval_write_cmd(Cmd::Insert(key.into(), val)).unwrap();
     }
 
-    lazy_static! {
-        static ref DB: RwLock<Db> = {
-            let mut db = Db::new();
-            insert(
-                &mut db,
-                "t",
-                Json::from(vec![
-                    json!({"name": "james", "age": 35}),
-                    json!({"name": "ania", "age": 28, "job": "english teacher"}),
-                    json!({"name": "misha", "age": 10}),
-                    json!({"name": "ania", "age": 20}),
-                ]),
-            );
-            RwLock::new(db)
-        };
-        static ref DB_REF: RwLockReadGuard<'static, Db> = DB.try_read().unwrap();
+    fn insert_data(db: &mut Db) {
+        insert(
+            db,
+            "t",
+            json!([
+                {"name": "james", "age": 35},
+                {"name": "ania", "age": 28, "job": "english teacher"},
+                {"name": "misha", "age": 10},
+                {"name": "ania", "age": 20}
+            ]),
+        );
     }
 
-    fn query(json: Json) -> Query<'static> {
+    fn test_db() -> Db {
+        let mut db = Db::new();
+        insert_data(&mut db);
+        db
+    }
+
+    fn query(json: Json) -> Result<Json,Error> {
+        let db = test_db();
         let cmd = serde_json::from_value(json).unwrap();
-        Query::from(&DB_REF, cmd)
+        let qry = Query::from(&db, cmd);
+        qry.eval()
     }
 
     #[test]
@@ -692,7 +693,7 @@ mod tests {
             {"_id": 2, "name": "misha", "age": 10},
             {"_id": 3, "name": "ania", "age": 20},
         ]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -704,7 +705,7 @@ mod tests {
             {"_id": 2, "name": "misha"},
             {"_id": 3, "name": "ania"},
         ]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
     #[test]
     fn select_3_prop_query() {
@@ -715,14 +716,14 @@ mod tests {
             {"_id": 2, "name": "misha", "age": 10},
             {"_id": 3, "name": "ania", "age": 20},
         ]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
     fn select_all_where_eq_query() {
         let qry = query(json!({"from": "t", "where": {"==": ["name", "james"]}}));
         let val = json!([{"_id": 0, "name": "james", "age": 35}]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -733,7 +734,7 @@ mod tests {
             {"_id": 2, "name": "misha", "age": 10},
             {"_id": 3, "name": "ania", "age": 20},
         ]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -743,14 +744,14 @@ mod tests {
             {"_id": 0, "name": "james", "age": 35},
             {"_id": 1, "name": "ania", "age": 28, "job": "english teacher"},
         ]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
     fn select_all_where_lt_query_ok() {
         let qry = query(json!({"from": "t", "where": {"<": ["age", 20]}}));
         let val = json!([{"_id": 2, "name": "misha", "age": 10}]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -761,7 +762,7 @@ mod tests {
             {"_id": 2, "name": "misha", "age": 10},
             {"_id": 3, "name": "ania", "age": 20},
         ]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -772,7 +773,7 @@ mod tests {
             {"_id": 1, "name": "ania", "age": 28, "job": "english teacher"}
         ]);
 
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -785,7 +786,7 @@ mod tests {
             ]}
         }));
         let val = json!([{"_id": 1, "name": "ania", "age": 28, "job": "english teacher"}]);
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -795,7 +796,7 @@ mod tests {
             "from": "t"
         }));
         let val = json!({"totalAge": 93});
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -807,7 +808,7 @@ mod tests {
             "from": "t"
         }));
         let val = json!({"maxAge": 35});
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -819,7 +820,7 @@ mod tests {
             "from": "t"
         }));
         let val = json!({"maxName": "misha"});
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -831,7 +832,7 @@ mod tests {
             "from": "t"
         }));
         let val = json!({"minAge": 10});
-        assert_eq!(Ok(val), qry.eval());
+        assert_eq!(Ok(val), qry);
     }
 
     #[test]
@@ -842,7 +843,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"avgAge": 23.25})), qry.eval());
+        assert_eq!(Ok(json!({"avgAge": 23.25})), qry);
     }
 
     #[test]
@@ -853,7 +854,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"firstAge": 35})), qry.eval());
+        assert_eq!(Ok(json!({"firstAge": 35})), qry);
     }
 
     #[test]
@@ -864,7 +865,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"lastAge": 20})), qry.eval());
+        assert_eq!(Ok(json!({"lastAge": 20})), qry);
     }
 
     #[test]
@@ -875,7 +876,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"varAge": 115.58333333333333})), qry.eval());
+        assert_eq!(Ok(json!({"varAge": 115.58333333333333})), qry);
     }
 
     #[test]
@@ -888,7 +889,7 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({"devAge": 10.750968948580091})),
-            qry.eval()
+            qry
         );
     }
 
@@ -901,7 +902,7 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!({"maxAge": 35})), qry.eval());
+        assert_eq!(Ok(json!({"maxAge": 35})), qry);
     }
 
     #[test]
@@ -915,7 +916,7 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!([{"_id": 0,"age":35}, {"_id": 1, "age": 28}])),
-            qry.eval()
+            qry
         );
     }
 
@@ -928,7 +929,7 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!({"minAge": 28})), qry.eval());
+        assert_eq!(Ok(json!({"minAge": 28})), qry);
     }
 
     #[test]
@@ -941,7 +942,7 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry.eval());
+        assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry);
     }
 
     #[test]
@@ -957,7 +958,7 @@ mod tests {
                 {"_id": 2, "name": "misha", "age": 10},
                 {"_id": 3, "name": "ania", "age": 20},
             ])),
-            qry.eval()
+            qry
         );
     }
 
@@ -973,7 +974,7 @@ mod tests {
                 {"_id": 0, "name": "james", "age": 35},
                 {"_id": 1, "name": "ania", "age": 28, "job": "english teacher"},
             ])),
-            qry.eval()
+            qry
         );
     }
 
@@ -992,7 +993,7 @@ mod tests {
                 "ania": [{"_id": 1, "age": 28}, {"_id": 3, "age": 20}],
                 "james": [{"_id": 0, "age": 35}],
             })),
-            qry.eval()
+            qry
         );
     }
 
@@ -1012,7 +1013,7 @@ mod tests {
                 "28": [{"_id": 1, "name": "ania"}],
                 "35": [{"_id": 0, "name": "james"}],
             })),
-            qry.eval()
+            qry
         );
     }
 
@@ -1028,7 +1029,7 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({"ania": [{"_id": 1, "age":28}], "james": [{"_id": 0, "age": 35}]})),
-            qry.eval()
+            qry
         );
     }
 
@@ -1048,7 +1049,7 @@ mod tests {
                 "ania": [{"_id": 1, "age": 28, "job": "english teacher"}],
                 "james": [{"_id": 0, "age": 35}],
             })),
-            qry.eval()
+            qry
         );
     }
 
@@ -1064,7 +1065,7 @@ mod tests {
                 "ania": [{"_id": 1, "age": 28, "job": "english teacher"}],
                 "james": [{"_id": 0, "age": 35}],
             })),
-            qry.eval()
+            qry
         );
     }
 }

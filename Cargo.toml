@@ -14,4 +14,3 @@ tokio-util = { version = "0.3", features = ["codec"] }
 
 [dev-dependencies]
 assert_approx_eq = "*"
-lazy_static = "*"
