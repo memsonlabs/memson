@@ -463,7 +463,6 @@ impl<'a> Query<'a> {
 
     fn eval(&self) -> Result<Json, Error> {
         let rows = self.eval_from()?;
-        println!("rows={:?}", rows);
         if let Some(ref filter) = self.cmd.filter {
             let filtered_rows = self.eval_where(rows, filter.clone())?;
             self.eval_select(&filtered_rows)
@@ -533,7 +532,6 @@ impl<'a> Query<'a> {
     }
 
     fn eval_keyed_select(&self, by: &Json, rows: &[Json]) -> Result<Json, Error> {
-        println!("rows={:?}", rows);
         let by_key: &str = match by {
             Json::String(s) => s.as_ref(),
             _ => unimplemented!(),
