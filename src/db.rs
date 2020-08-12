@@ -310,10 +310,6 @@ impl Db {
         }
     }
 
-    fn id_entry<K:Into<String>>(&mut self, key: K) -> &mut usize {
-        self.ids.entry(key.into()).or_insert(0)
-    }
-
     fn eval_get(&self, key: String) -> Res<'_> {
         match self.cache.get(&key) {
             Some(val) => Ok(Reply::Ref(val)),

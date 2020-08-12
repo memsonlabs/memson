@@ -2,18 +2,7 @@ use crate::db::{Cmd, Db};
 
 use crate::json::*;
 use serde::{Deserialize, Serialize};
-use serde_json::map::Entry;
 use serde_json::{Map, Value as Json};
-
-struct Aggregation {
-    col_name: String,
-    data: Option<JsonObj>,
-}
-
-trait KeyAggregate {
-    fn push(&mut self, by: &str, row: &Json) -> Result<(), Error>;
-    fn aggregate(self: Box<Self>) -> Aggregation;
-}
 
 trait Aggregate<'a> {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error>;
@@ -25,56 +14,6 @@ struct Get {
     col_name: String,
     key: String,
     map: Option<JsonObj>,
-}
-
-impl Get {
-    fn new(col_name: String, key: String) -> Self {
-        Self {
-            col_name,
-            key,
-            map: None,
-        }
-    }
-}
-
-fn add_to_entry(entry: Entry<'_>, val: Json) {
-    match entry {
-        Entry::Vacant(entry) => {
-            entry.insert(val);
-        }
-        Entry::Occupied(entry) => {
-            json_push(entry.into_mut(), val);
-        }
-    }
-}
-
-impl KeyAggregate for Get {
-    fn push(&mut self, by: &str, row: &Json) -> Result<(), Error> {
-        let by_key = by.to_string();
-        let val = match row.get(&self.key) {
-            Some(val) => val.clone(),
-            None => return Ok(()),
-        };
-        match self.map {
-            None => {
-                let mut map = Map::new();
-                map.insert(by_key, val);
-                self.map = Some(map);
-            }
-            Some(ref mut agg) => {
-                let entry = agg.entry(by_key);
-                add_to_entry(entry, val)
-            }
-        };
-        Ok(())
-    }
-
-    fn aggregate(self: Box<Self>) -> Aggregation {
-        Aggregation {
-            col_name: self.col_name,
-            data: self.map,
-        }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -565,44 +504,6 @@ impl<'a> Query<'a> {
                 Some(_) => Err(Error::BadSelect),
                 None => self.eval_select_all(rows),
             }
-        }
-    }
-
-    fn parse_aggregators(&self) -> Result<Option<Vec<Box<dyn KeyAggregate>>>, Error> {
-        if let Some(selects) = &self.cmd.selects {
-            let mut aggs: Vec<Box<dyn KeyAggregate>> = Vec::new();
-            match selects {
-                Json::Object(obj) => {
-                    for (k, v) in obj {
-                        match v {
-                            Json::String(s) => {
-                                aggs.push(Box::new(Get::new(k.to_string(), s.to_string())));
-                            }
-                            Json::Object(obj) => {
-                                for (cmd, arg) in obj {
-                                    match cmd.as_ref() {
-                                        "get" => match arg {
-                                            Json::String(key) => {
-                                                aggs.push(Box::new(Get::new(
-                                                    k.to_string(),
-                                                    key.to_string(),
-                                                )));
-                                            }
-                                            _ => unimplemented!(),
-                                        },
-                                        _ => unimplemented!(),
-                                    }
-                                }
-                            }
-                            _ => unimplemented!(),
-                        }
-                    }
-                }
-                _ => unimplemented!(),
-            };
-            Ok(Some(aggs))
-        } else {
-            Ok(None)
         }
     }
 
