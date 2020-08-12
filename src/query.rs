@@ -524,6 +524,7 @@ impl<'a> Query<'a> {
 
     fn eval(&self) -> Result<Json, Error> {
         let rows = self.eval_from()?;
+        println!("rows={:?}", rows);
         if let Some(ref filter) = self.cmd.filter {
             let filtered_rows = self.eval_where(rows, filter.clone())?;
             self.eval_select(&filtered_rows)
@@ -605,41 +606,70 @@ impl<'a> Query<'a> {
         }
     }
 
+    fn parse_ids(&self) -> Result<Option<Vec<String>>, Error> {
+        if let Some(selects) = &self.cmd.selects {
+            match selects {
+                Json::Object(obj) => {
+                    let mut ids = Vec::new();
+                    for (_, v)  in obj {
+
+                        match v {
+                            Json::Object(obj) => {
+                                for (_, v)  in obj {
+                                    ids.push(json_to_string(v).ok_or(Error::BadSelect)?);
+                                }
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    Ok(Some(ids))
+                }
+                _ => unimplemented!(),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     fn eval_keyed_select(&self, by: &Json, rows: &[Json]) -> Result<Json, Error> {
-        let mut aggs = self.parse_aggregators()?.unwrap(); // TODO remove unwrap
+        println!("rows={:?}", rows);
         let by_key: &str = match by {
             Json::String(s) => s.as_ref(),
             _ => unimplemented!(),
         };
+        let ids = self.parse_ids()?; // TODO remove unwrap
+        let mut keyed_data: Map<String, Json> = Map::new();
         for row in rows {
             match row.get(by_key) {
-                Some(key) => {
-                    let key = json_to_string(key).ok_or(Error::BadKey)?;
-                    for agg in aggs.iter_mut() {
-                        agg.push(&key, row)?;
-                    }
+                Some(by_val) => {
+                    let obj: JsonObj = if let Some(ids) = &ids {
+                        let mut obj = Map::new();
+                        obj.insert("_id".to_string(), row.get("_id").unwrap().clone());
+                        for id in ids {
+                            if let Some(val) = row.get(id) {
+                                obj.insert(id.clone(), val.clone());
+                            }
+                        }
+                        obj
+                    } else {
+                        match row {
+                            Json::Object(obj) => {
+                                let mut obj = obj.clone();
+                                obj.remove(by_key);
+                                obj
+                            },
+                            _ => unimplemented!(),
+                        }
+                    };
+                    let by_val_str = json_to_string(by_val).ok_or(Error::BadKey)?;
+                    let entry = keyed_data.entry(by_val_str).or_insert_with(|| Json::Array(Vec::new()));
+                    json_push(entry, Json::from(obj));
                 }
                 None => continue,
             }
         }
-        let mut data = JsonObj::new();
-        for agg in aggs.into_iter() {
-            let a = agg.aggregate(); //TODO remove this clone
-            if let Some(obj) = a.data {
-                for (key, agg) in obj {
-                    let entry = data
-                        .entry(key)
-                        .or_insert_with(|| Json::from(JsonObj::new()));
-                    match entry {
-                        Json::Object(ref mut obj) => {
-                            obj.insert(a.col_name.clone(), agg);
-                        }
-                        _ => unimplemented!(),
-                    }
-                }
-            }
-        }
-        Ok(Json::Object(data))
+
+        Ok(Json::Object(keyed_data))
     }
 
     fn eval_obj_selects(&self, obj: JsonObj, rows: &[Json]) -> Result<Json, Error> {
@@ -723,10 +753,13 @@ fn add_row_id(row: &Json, i: usize) -> Result<Json, Error> {
 mod tests {
     use super::*;
 
-    use crate::db::tests::insert;
     use lazy_static::lazy_static;
     use serde_json::json;
     use std::sync::{RwLock, RwLockReadGuard};
+
+    fn insert<K:Into<String>>(db: &mut Db, key: K, val: Json) {
+        db.eval_write_cmd(Cmd::Insert(key.into(), val)).unwrap();
+    }
 
     lazy_static! {
         static ref DB: RwLock<Db> = {
@@ -1056,9 +1089,9 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({
-                "misha": {"age": 10},
-                "ania": {"age": [28, 20]},
-                "james": {"age": 35}
+                "misha": [{"_id": 2, "age": 10}],
+                "ania": [{"_id": 1, "age": 28}, {"_id": 3, "age": 20}],
+                "james": [{"_id": 0, "age": 35}],
             })),
             qry.eval()
         );
@@ -1075,10 +1108,10 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({
-                "10": {"name": "misha"},
-                "20": {"name": "ania"},
-                "28": {"name": "ania"},
-                "35": {"name": "james"},
+                "10": [{"_id": 2, "name": "misha"}],
+                "20": [{"_id": 3, "name": "ania"}],
+                "28": [{"_id": 1, "name": "ania"}],
+                "35": [{"_id": 0, "name": "james"}],
             })),
             qry.eval()
         );
@@ -1095,7 +1128,7 @@ mod tests {
             "where": {">": ["age", 20]}
         }));
         assert_eq!(
-            Ok(json!({"ania": {"age":28}, "james": {"age": 35}})),
+            Ok(json!({"ania": [{"_id": 1, "age":28}], "james": [{"_id": 0, "age": 35}]})),
             qry.eval()
         );
     }
@@ -1113,8 +1146,24 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({
-                "ania": {"age": 28, "job": "english teacher"},
-                "james": {"age": 35},
+                "ania": [{"_id": 1, "age": 28, "job": "english teacher"}],
+                "james": [{"_id": 0, "age": 35}],
+            })),
+            qry.eval()
+        );
+    }
+
+    #[test]
+    fn select_all_by_name_where_age_gt_20() {
+        let qry = query(json!({
+            "from": "t",
+            "by": "name",
+            "where": {">": ["age", 20]}
+        }));
+        assert_eq!(
+            Ok(json!({
+                "ania": [{"_id": 1, "age": 28, "job": "english teacher"}],
+                "james": [{"_id": 0, "age": 35}],
             })),
             qry.eval()
         );

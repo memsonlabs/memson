@@ -183,6 +183,42 @@ pub fn append(val: &mut Json, elem: Json) {
     }
 }
 
+fn add_id(val: Json, id: usize) -> Result<Json, Error>{
+    match val {
+        Json::Object(mut obj) => {
+            obj.insert("_id".to_string(), Json::from(id));
+            Ok(Json::from(obj))
+        }
+        _ => Err(Error::ExpectedObj),
+    }
+}
+
+pub fn insert<'a>(val: &'a mut Json, arg: Json, id: &'a mut usize) -> Result<usize, Error>{
+    match val {
+        Json::Array(ref mut arr) => {
+            match arg {
+                Json::Array(arg) => {
+                    let n = arg.len();
+                    for e in arg {
+                        arr.push(add_id(e, *id)?);
+                        *id += 1;
+                    }
+                    Ok(n)
+                }
+                val => {
+                    arr.push(val);
+                    Ok(1)
+                },
+            }
+        }
+        val => {
+            let arr = vec![val.clone(), arg];
+            *val = Json::from(arr);
+            Ok(1)
+        }
+    }
+}
+
 pub fn first(val: &Json) -> Res<'_> {
     match val {
         Json::Array(ref arr) => arr_first(arr),
