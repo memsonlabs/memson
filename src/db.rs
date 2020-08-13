@@ -2,8 +2,86 @@ use crate::json::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
+use crate::query::{Query};
 
-use crate::query::{self, QueryCmd};
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QueryCmd {
+    #[serde(rename = "select")]
+    pub selects: Option<Json>,
+    pub from: String,
+    pub by: Option<Json>,
+    #[serde(rename = "where")]
+    pub filter: Option<Filter>,
+}
+
+impl QueryCmd {
+    pub fn eval(self, db: &Db) -> Result<Json, Error> {
+        let qry = Query::from(db, self);
+        qry.eval()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum Filter {
+    #[serde(rename = "==")]
+    Eq(String, Json),
+    #[serde(rename = "!=")]
+    NotEq(String, Json),
+    #[serde(rename = ">")]
+    Gt(String, Json),
+    #[serde(rename = "<")]
+    Lt(String, Json),
+    #[serde(rename = ">=")]
+    Gte(String, Json),
+    #[serde(rename = "<=")]
+    Lte(String, Json),
+    #[serde(rename = "&&")]
+    And(Box<Filter>, Box<Filter>),
+    #[serde(rename = "||")]
+    Or(Box<Filter>, Box<Filter>),
+}
+
+
+impl Filter {
+    pub fn apply(&self, row: &Json) -> Result<bool, Error> {
+        match self {
+            Filter::Eq(key, val) => Filter::eval(row, key, val, &json_eq),
+            Filter::NotEq(key, val) => Filter::eval(row, key, val, &json_neq),
+            Filter::Lt(key, val) => Filter::eval(row, key, val, &json_lt),
+            Filter::Gt(key, val) => Filter::eval(row, key, val, &json_gt),
+            Filter::Lte(key, val) => Filter::eval(row, key, val, &json_lte),
+            Filter::Gte(key, val) => Filter::eval(row, key, val, &json_gte),
+            Filter::And(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x && y),
+            Filter::Or(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x || y),
+        }
+    }
+
+    fn eval_gate(
+        row: &Json,
+        lhs: &Filter,
+        rhs: &Filter,
+        p: &dyn Fn(bool, bool) -> bool,
+    ) -> Result<bool, Error> {
+        let lhs = lhs.apply(row)?;
+        let rhs = rhs.apply(row)?;
+        Ok(p(lhs, rhs))
+    }
+
+    fn eval(
+        row: &Json,
+        key: &str,
+        val: &Json,
+        predicate: &dyn Fn(&Json, &Json) -> Result<bool,Error>,
+    ) -> Result<bool, Error> {
+        match row {
+            Json::Object(obj) => match obj.get(key) {
+                Some(v) => predicate(v, val),
+                None => Ok(false),
+            },
+            v => predicate(v, val),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Cmd {
@@ -190,8 +268,15 @@ pub enum Error {
     EmptySequence,
     BadNumber,
     UnknownKey(String),
-    Query(query::Error),
-    ExpectedObj
+    ExpectedObj,
+    FloatCmp,
+    BadKey,
+    BadFrom,
+    BadSelect,
+    BadObject,
+    BadWhere,
+    NotArray,
+    NotAggregate,
 }
 
 impl Error {
@@ -203,8 +288,10 @@ impl Error {
             Error::EmptySequence => "empty sequence",
             Error::BadNumber => "bad number",
             Error::UnknownKey(_) => "unknown key",
-            Error::Query(_) => "bad query",
             Error::ExpectedObj => "expected object",
+            Error::FloatCmp => "float comparison",
+
+            _ => unimplemented!()
         };
         "error: ".to_string() + msg
     }
@@ -330,17 +417,24 @@ impl Db {
     fn eval_query(&self, cmd: QueryCmd) -> Res<'_> {
         cmd.eval(self)
             .map(Reply::Val)
-            .map_err(|err| Error::Query(err))
     }
 
     fn eval_min(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
-        min(val).map(Reply::Val)
+        match json_min(val) {
+            Ok(Some(val)) => Ok(Reply::Val(val)),
+            Ok(None) => Err(Error::EmptySequence),
+            Err(err) => Err(err),
+        }
     }
 
     fn eval_max(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
-        max(val).map(Reply::Val)
+        match json_max(val) {
+            Ok(Some(val)) => Ok(Reply::Val(val)),
+            Ok(None) => Err(Error::EmptySequence),
+            Err(err) => Err(err),
+        }
     }
 
     fn eval_avg(&self, key: String) -> Res<'_> {
@@ -642,8 +736,8 @@ pub mod tests {
         assert_eq!(Ok(Json::Bool(true)), max(&db,"b"));
         assert_eq!(Ok(Json::from(2)), max(&db,"i"));
         assert_eq!(Ok(Json::from(3.3)), max(&db,"f"));
-        assert_eq!(Ok(Json::from(5.0)), max(&db,"ia"));
-        assert_eq!(Ok(Json::from(5.5)), max(&db,"fa"));
+        assert_eq!(Ok(Json::from(5)), max(&db,"ia"));
+        assert_eq!(Err(Error::FloatCmp), max(&db,"fa"));
     }
 
     #[test]
@@ -652,8 +746,8 @@ pub mod tests {
         assert_eq!(Ok(Json::Bool(true)), min(&db,"b"));
         assert_eq!(Ok(Json::from(2)), min(&db,"i"));
         assert_eq!(Ok(Json::from(3.3)), min(&db,"f"));
-        assert_eq!(Ok(Json::from(1.1)), min(&db,"fa"));
-        assert_eq!(Ok(Json::from(1.0)), min(&db,"ia"));
+        assert_eq!(Err(Error::FloatCmp), min(&db,"fa"));
+        assert_eq!(Ok(Json::from(1)), min(&db,"ia"));
     }
 
     #[test]

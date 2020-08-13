@@ -5,6 +5,19 @@ pub use serde_json::{json, Map, Value as Json};
 use std::cmp::PartialOrd;
 use std::mem;
 
+pub fn json_string(val: &Json) -> Option<&str> {
+    match val {
+        Json::String(s) => Some(s),
+        _ => None,
+    }
+}
+
+pub fn json_len(val: &Json) -> usize {
+    match val {
+        Json::Array(ref arr) => arr.len(),
+        _ => 1
+    }
+}
 //TODO make generic comparison
 pub fn json_num_gt(x: &JsonNum, y: &JsonNum) -> Option<bool> {
     match (x.is_i64(), y.is_i64()) {
@@ -107,50 +120,53 @@ pub fn json_add_num(x: &Json, y: &JsonNum) -> Option<Json> {
     Some(val)
 }
 
-pub fn json_eq(x: &Json, y: &Json) -> Option<bool> {
-    Some(x == y)
+pub fn json_eq(x: &Json, y: &Json) -> Result<bool, Error> {
+    Ok(x == y)
 }
 
-pub fn json_neq(x: &Json, y: &Json) -> Option<bool> {
-    Some(x != y)
+pub fn json_neq(x: &Json, y: &Json) -> Result<bool, Error> {
+    Ok(x != y)
 }
 
-fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> Option<bool> {
+fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> Result<bool, Error> {
     match (x, y) {
         (Json::String(x), Json::String(y)) => {
             let cmp = Cmp::new(x, y);
-            Some(p(&cmp))
+            Ok(p(&cmp))
         }
         (Json::Number(x), Json::Number(y)) => {
             let x = match x.as_i64() {
                 Some(val) => val,
-                None => return None,
+                None => return Err(Error::FloatCmp),
             };
             let y = match y.as_i64() {
                 Some(val) => val,
-                None => return None,
+                None => return Err(Error::FloatCmp),
             };
             let cmp = Cmp::new(x, y);
-            Some(p(&cmp))
+            Ok(p(&cmp))
         }
-        (Json::Bool(x), Json::Bool(y)) => Some(x > y),
-        _ => None,
+        (Json::Bool(x), Json::Bool(y)) => {
+            let cmp = Cmp::new(*x, *y);
+            Ok(p(&cmp))
+        },
+        _ => Err(Error::BadType),
     }
 }
 
-pub fn json_gt(x: &Json, y: &Json) -> Option<bool> {
+pub fn json_gt(x: &Json, y: &Json) -> Result<bool, Error> {
     json_cmp(x, y, &|x| x.gt())
 }
 
-pub fn json_lt(x: &Json, y: &Json) -> Option<bool> {
+pub fn json_lt(x: &Json, y: &Json) -> Result<bool, Error> {
     json_cmp(x, y, &|x| x.lt())
 }
 
-pub fn json_gte(x: &Json, y: &Json) -> Option<bool> {
+pub fn json_gte(x: &Json, y: &Json) -> Result<bool, Error> {
     json_cmp(x, y, &|x| x.gte())
 }
 
-pub fn json_lte(x: &Json, y: &Json) -> Option<bool> {
+pub fn json_lte(x: &Json, y: &Json) -> Result<bool, Error> {
     json_cmp(x, y, &|x| x.lte())
 }
 
@@ -279,10 +295,10 @@ pub fn dev(val: &Json) -> Result<Json, Error> {
     }
 }
 
-pub fn max(val: &Json) -> Result<Json, Error> {
+pub fn json_max(val: &Json) -> Result<Option<Json>, Error> {
     match val {
         Json::Array(ref arr) => arr_max(arr),
-        val => Ok(val.clone()),
+        val => Ok(Some(val.clone())),
     }
 }
 
@@ -502,11 +518,10 @@ fn json_sub_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
     Ok(Json::from(val))
 }
 
-pub fn min(val: &Json) -> Result<Json, Error> {
+pub fn json_min(val: &Json) -> Result<Option<Json>, Error> {
     match val {
-        Json::Number(val) => Ok(Json::Number(val.clone())),
         Json::Array(ref arr) => arr_min(arr),
-        val => Ok(val.clone()),
+        val => Ok(Some(val.clone())),
     }
 }
 
@@ -587,48 +602,30 @@ pub fn json_f64(val: &Json) -> Option<f64> {
     }
 }
 
-fn arr_max(s: &[Json]) -> Result<Json, Error> {
+fn arr_max(s: &[Json]) -> Result<Option<Json>, Error> {
     if s.is_empty() {
-        return Ok(Json::Null);
+        return Ok(None);
     }
-    let mut max = match json_f64(&s[0]) {
-        Some(val) => val,
-        None => return Err(Error::BadType),
-    };
-    for val in s.iter().skip(1) {
-        match val {
-            Json::Number(num) => {
-                let v = num.as_f64().unwrap();
-                if v > max {
-                    max = v;
-                }
-            }
-            _ => return Err(Error::BadType),
+    let mut max = &s[0];
+    for val in &s[1..] {
+        if json_gt(val, max)? {
+            max = val;
         }
     }
-    Ok(Json::from(max))
+    Ok(Some(max.clone()))
 }
 
-fn arr_min(s: &[Json]) -> Result<Json, Error> {
+fn arr_min(s: &[Json]) -> Result<Option<Json>, Error> {
     if s.is_empty() {
         return Err(Error::EmptySequence);
     }
-    let mut min = match json_f64(&s[0]) {
-        Some(val) => val,
-        None => return Err(Error::BadType),
-    };
+    let mut min = &s[0];
     for val in s.iter().skip(1) {
-        match val {
-            Json::Number(num) => {
-                let v = num.as_f64().unwrap();
-                if v < min {
-                    min = v;
-                }
-            }
-            _ => return Err(Error::BadType),
+        if json_lt(val, min)? {
+            min = val;
         }
     }
-    Ok(Json::from(min))
+    Ok(Some(min.clone()))
 }
 
 /*

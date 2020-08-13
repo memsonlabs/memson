@@ -1,8 +1,241 @@
-use crate::db::{Cmd, Db};
+use crate::db::{self, Cmd, Db, Error, QueryCmd, Filter};
 
-use crate::json::*;
+use crate::json::{self, *};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
+
+#[derive(Debug, Default)]
+struct KeyedMax {
+    col_name: String,
+    key: String,
+}
+
+impl KeyedMax {
+    fn new<S:Into<String>>(col_name: S, key: String) -> Self {
+        KeyedMax { col_name: col_name.into(), key }
+    }
+}
+
+fn key_obj_max(key: &str, val: &Json) -> Result<Option<Json>, Error> {
+    match val {
+        Json::Array(arr) => {
+            if arr.is_empty() {
+                return Ok(None);
+            }
+            let mut max = None;
+            for val in arr {
+                match val {
+                    Json::Object(obj) => {
+                        max = if let Some(val) = obj.get(key) {
+                            println!("{:?} > {:?}", val, max);
+                            if let Some(max) = max {
+                                let is_max = json_gt(val, max).map_err(|e| Error::BadType)?;
+                                if is_max {
+                                    Some(val)
+                                } else {
+                                    Some(max)
+                                }
+                            } else {
+                                Some(val)
+                            }
+                        } else {
+                            max
+                        };
+                    }
+                    _=> return Err(Error::BadObject),
+                }
+            }
+            Ok(max.map(|x| x.clone()))
+        }
+        val => Ok(Some(val.clone())),
+    }
+}
+
+
+fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
+    match val {
+        Json::Array(arr) => {
+            if arr.is_empty() {
+                return Ok(None);
+            }
+            let mut min = None;
+            for val in arr {
+                match val {
+                    Json::Object(obj) => {
+                        min = if let Some(val) = obj.get(key) {
+                            if let Some(max) = min {
+                                if json_lt(val, max).map_err(|_|Error::BadType)? {
+                                    Some(val)
+                                } else {
+                                    Some(max)
+                                }
+                            } else {
+                                Some(val)
+                            }
+                        } else {
+                            min
+                        };
+                    }
+                    _=> return Err(Error::BadObject),
+                }
+            }
+            println!("min = {:?}", min);
+            Ok(min.map(|x| x.clone()))
+        }
+        val => Ok(Some(val.clone())),
+    }
+}
+
+impl KeyedAggregate for KeyedMax {
+    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
+        for (k, v) in input {
+            println!("finding max of {:?}", v);
+            let val = key_obj_max(&self.key, v).map_err(|err| {
+                eprintln!("{:?}", err);
+                Error::BadType
+            })?;
+            println!("{:?}", val);
+            if let Some(val) = val {
+                let entry = output.entry(k.clone()).or_insert_with(|| Json::from(JsonObj::new()));
+                match entry {
+                    Json::Object(ref mut obj) => {
+                        obj.insert(self.col_name.clone(), val);
+                    }
+                    _ => return Err(Error::ExpectedObj),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct KeyedMin {
+    col_name: String,
+    key: String,
+}
+
+impl KeyedMin {
+    fn new<S:Into<String>>(col_name: S, key: String) -> Self {
+        KeyedMin { col_name: col_name.into(), key }
+    }
+}
+
+impl KeyedAggregate for KeyedMin {
+    //TODO refactor to make generic between this and KeyedMax as the logic is too similar
+    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
+        for (k, v) in input {
+            println!("finding max of {:?}", v);
+            let val = key_obj_min(&self.key, v).map_err(|err| {
+                eprintln!("{:?}", err);
+                Error::BadType
+            })?;
+            println!("{:?}", val);
+            if let Some(val) = val {
+                let entry = output.entry(k.clone()).or_insert_with(|| Json::from(JsonObj::new()));
+                match entry {
+                    Json::Object(ref mut obj) => {
+                        obj.insert(self.col_name.clone(), val);
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct KeyedLast {
+    col_name: String,
+    key: String,
+}
+
+impl KeyedLast {
+    fn new<S:Into<String>>(name: S, key: String) -> Self {
+        KeyedLast { col_name: name.into(), key }
+    }
+}
+
+impl KeyedAggregate for KeyedLast {
+    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
+
+        for (k, v) in input {
+            let val = match v {
+                Json::Array(s) => {
+                    if s.is_empty() {
+                        return Ok(());
+                    }
+                    s[s.len() - 1].clone()
+                },
+                val => val.clone(),
+            };
+            output.insert(k.clone(), val);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct KeyedFirst {
+    col_name: String,
+    key: String,
+}
+
+impl KeyedFirst {
+    fn new<S:Into<String>>(col_name: S, key: String) -> Self {
+        Self { col_name: col_name.into(), key }
+    }
+}
+
+impl KeyedAggregate for KeyedFirst {
+    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
+        for (key, val) in input {
+            let val = match val {
+                Json::Array(s) => {
+                    if s.is_empty() {
+                        return Ok(());
+                    }
+                    s[0].clone()
+                },
+                val => val.clone(),
+            };
+            output.insert(key.clone(), val);
+        };
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct Count {
+    col_name: String,
+    key: String,
+}
+
+impl Count {
+    fn new<S:Into<String>>(col_name: S, key: String) -> Count {
+        Self { col_name: col_name.into(), key }
+    }
+}
+
+impl KeyedAggregate for Count {
+    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
+        for (key, val) in input {
+            let entry = output.entry(key.to_string()).or_insert_with(||Json::Object(JsonObj::new()));
+            match entry {
+                Json::Object(ref mut obj) => {
+                    obj.insert(self.col_name.clone(), Json::from(json_len(val)));
+                }
+                _ => return Err(Error::ExpectedObj),
+            }
+        }
+        Ok(())
+    }
+}
+
+trait KeyedAggregate {
+    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error>;
+}
 
 trait Aggregate<'a> {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error>;
@@ -255,94 +488,28 @@ impl<'a> Aggregate<'a> for Avg {
 
 type JsonObj = Map<String, Json>;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct QueryCmd {
-    #[serde(rename = "select")]
-    selects: Option<Json>,
-    from: String,
-    by: Option<Json>,
-    #[serde(rename = "where")]
-    filter: Option<Filter>,
+fn eq(x: &Json, y: &Json) -> Result<bool, Error> {
+    json_eq(x,y)
 }
 
-impl QueryCmd {
-    pub fn eval(self, db: &Db) -> Result<Json, Error> {
-        let qry = Query::from(db, self);
-        qry.eval()
-    }
+fn neq(x: &Json, y: &Json) -> Result<bool, Error> {
+    json_neq(x, y)
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Error {
-    BadKey,
-    BadFrom,
-    BadSelect,
-    BadObject,
-    BadWhere,
-    NotArray,
-    BadType,
-    NotAggregate,
+fn lt(x: &Json, y: &Json) -> Result<bool, Error> {
+    json_lt(x, y)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-enum Filter {
-    #[serde(rename = "==")]
-    Eq(String, Json),
-    #[serde(rename = "!=")]
-    NotEq(String, Json),
-    #[serde(rename = ">")]
-    Gt(String, Json),
-    #[serde(rename = "<")]
-    Lt(String, Json),
-    #[serde(rename = ">=")]
-    Gte(String, Json),
-    #[serde(rename = "<=")]
-    Lte(String, Json),
-    #[serde(rename = "&&")]
-    And(Box<Filter>, Box<Filter>),
-    #[serde(rename = "||")]
-    Or(Box<Filter>, Box<Filter>),
+fn lte(x: &Json, y: &Json) -> Result<bool, Error> {
+    json_lte(x, y)
 }
 
-impl Filter {
-    fn apply(&self, row: &Json) -> Result<bool, Error> {
-        match self {
-            Filter::Eq(key, val) => Filter::eval(row, key, val, &json_eq),
-            Filter::NotEq(key, val) => Filter::eval(row, key, val, &json_neq),
-            Filter::Lt(key, val) => Filter::eval(row, key, val, &json_lt),
-            Filter::Gt(key, val) => Filter::eval(row, key, val, &json_gt),
-            Filter::Lte(key, val) => Filter::eval(row, key, val, &json_lte),
-            Filter::Gte(key, val) => Filter::eval(row, key, val, &json_gte),
-            Filter::And(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x && y),
-            Filter::Or(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x || y),
-        }
-    }
+fn gt(x: &Json, y: &Json) -> Result<bool, Error> {
+    json_gt(x, y)
+}
 
-    fn eval_gate(
-        row: &Json,
-        lhs: &Filter,
-        rhs: &Filter,
-        p: &dyn Fn(bool, bool) -> bool,
-    ) -> Result<bool, Error> {
-        let lhs = lhs.apply(row)?;
-        let rhs = rhs.apply(row)?;
-        Ok(p(lhs, rhs))
-    }
-
-    fn eval(
-        row: &Json,
-        key: &str,
-        val: &Json,
-        predicate: &dyn Fn(&Json, &Json) -> Option<bool>,
-    ) -> Result<bool, Error> {
-        match row {
-            Json::Object(obj) => match obj.get(key) {
-                Some(v) => predicate(v, val).ok_or(Error::BadWhere),
-                None => Ok(false),
-            },
-            v => predicate(v, val).ok_or(Error::BadWhere),
-        }
-    }
+fn gte(x: &Json, y: &Json) -> Result<bool, Error> {
+    json_gte(x, y)
 }
 
 //TODO pass vec to remove clone
@@ -442,7 +609,7 @@ where
     Ok(agg.apply())
 }
 
-struct Query<'a> {
+pub struct Query<'a> {
     db: &'a Db,
     cmd: QueryCmd,
 }
@@ -457,11 +624,11 @@ fn is_aggregation(cmds: &[(String, Cmd)]) -> bool {
 }
 
 impl<'a> Query<'a> {
-    fn from(db: &'a Db, cmd: QueryCmd) -> Self {
+    pub fn from(db: &'a Db, cmd: QueryCmd) -> Self {
         Self { db, cmd }
     }
 
-    fn eval(&self) -> Result<Json, Error> {
+    pub fn eval(&self) -> Result<Json, Error> {
         let rows = self.eval_from()?;
         if let Some(ref filter) = self.cmd.filter {
             let filtered_rows = self.eval_where(rows, filter.clone())?;
@@ -567,7 +734,57 @@ impl<'a> Query<'a> {
             }
         }
 
-        Ok(Json::Object(keyed_data))
+
+        if let Some(key_aggs) = self.parse_key_aggregations()? {
+            println!("key_aggs len = {:?}", key_aggs.len());
+            if key_aggs.is_empty() {
+                return Ok(Json::from(keyed_data));
+            }
+            let mut output = JsonObj::new();
+            for key_agg in key_aggs {
+                key_agg.aggregate(&keyed_data, &mut output)?;
+            }
+            Ok(Json::from(output))
+        } else {
+            Ok(Json::Object(keyed_data))
+        }
+
+
+    }
+
+    fn parse_key_aggregations(&self) -> Result<Option<Vec<Box<dyn KeyedAggregate>>>, Error> {
+        if let Some(selects) = &self.cmd.selects {
+            let mut a: Vec<Box<dyn KeyedAggregate>> = Vec::new();
+            match selects {
+                Json::Object(obj) => {
+                    for (col_name, cmd) in obj {
+                        match cmd {
+                            Json::Object(obj) => {
+                                for (k, v) in obj {
+                                    let key = json_string(v).ok_or(Error::BadSelect)?.to_string();
+                                    let agg: Box<dyn KeyedAggregate> = match k.as_ref() {
+                                        "count" => Box::new(Count::new(col_name, key)),
+                                        "get" => continue,
+                                        "first" => Box::new(KeyedFirst::new(col_name, key)),
+                                        "last" => Box::new(KeyedLast::new(col_name,key)),
+                                        "max" => Box::new(KeyedMax::new(col_name, key)),
+                                        "min" => Box::new(KeyedMin::new(col_name, key)),
+                                        _ => unimplemented!(),
+                                    };
+                                    a.push(agg);
+                                }
+                            }
+                            _ => unimplemented!(),
+                        }
+
+                    }
+                }
+                _ => unimplemented!()
+            }
+            Ok(Some(a))
+        } else {
+            Ok(None)
+        }
     }
 
     fn eval_obj_selects(&self, obj: JsonObj, rows: &[Json]) -> Result<Json, Error> {
@@ -997,6 +1214,102 @@ mod tests {
     }
 
     #[test]
+    fn select_first_age_by_name() {
+        let qry = query(json!({
+            "select": {
+                "age": {"first": "age"},
+            },
+            "from": "t",
+            "by": "name",
+        }));
+        assert_eq!(
+            Ok(json!({
+                "misha": {"age": 10},
+                "ania": {"age": 28},
+                "james": {"age": 35},
+            })),
+            qry
+        );
+    }
+
+
+    #[test]
+    fn select_last_age_by_name() {
+        let qry = query(json!({
+            "select": {
+                "age": {"last": "age"},
+            },
+            "from": "t",
+            "by": "name",
+        }));
+        assert_eq!(
+            Ok(json!({
+                "misha": {"age": 10},
+                "ania": {"age": 20},
+                "james": {"age": 35},
+            })),
+            qry
+        );
+    }
+
+    #[test]
+    fn select_count_age_by_name() {
+        let qry = query(json!({
+            "select": {
+                "age": {"count": "age"},
+            },
+            "from": "t",
+            "by": "name",
+        }));
+        assert_eq!(
+            Ok(json!({
+                "misha": {"age": 1},
+                "ania": {"age": 2},
+                "james": {"age": 1},
+            })),
+            qry
+        );
+    }
+
+    #[test]
+    fn select_min_age_by_name() {
+        let qry = query(json!({
+            "select": {
+                "age": {"min": "age"},
+            },
+            "from": "t",
+            "by": "name",
+        }));
+        assert_eq!(
+            Ok(json!({
+                "misha": {"age": 10},
+                "ania": {"age": 20},
+                "james": {"age": 35},
+            })),
+            qry
+        );
+    }
+
+    #[test]
+    fn select_max_age_by_name() {
+        let qry = query(json!({
+            "select": {
+                "age": {"max": "age"},
+            },
+            "from": "t",
+            "by": "name",
+        }));
+        assert_eq!(
+            Ok(json!({
+                "misha": {"age": 10},
+                "ania": {"age": 28},
+                "james": {"age": 35},
+            })),
+            qry
+        );
+    }
+
+    #[test]
     fn select_name_by_age() {
         let qry = query(json!({
             "select": {
@@ -1063,6 +1376,27 @@ mod tests {
             Ok(json!({
                 "ania": [{"_id": 1, "age": 28, "job": "english teacher"}],
                 "james": [{"_id": 0, "age": 35}],
+            })),
+            qry
+        );
+    }
+
+    #[test]
+    fn select_count_max_min_age_by_name() {
+        let qry = query(json!({
+            "select": {
+                "maxAge": {"max": "age"},
+                "minAge": {"min": "age"},
+                "countAge": {"count": "age"},
+            },
+            "from": "t",
+            "by": "name",
+        }));
+        assert_eq!(
+            Ok(json!({
+                "ania": {"maxAge": 28, "countAge": 2, "minAge": 20},
+                "james": {"maxAge": 35, "countAge": 1, "minAge": 35},
+                "misha": {"maxAge": 10, "countAge": 1, "minAge": 10}
             })),
             qry
         );
