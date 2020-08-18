@@ -45,23 +45,27 @@ use tokio::net::TcpListener;
 use tokio::stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
-use crate::db::{Cmd, Db, Res};
+use crate::cmd::{Cmd, Res};
+use crate::rdb::InMemDb;
 use futures::SinkExt;
 use std::env;
 use std::error::Error;
 use std::sync::{Arc, RwLock};
 
+mod cmd;
 mod db;
+mod err;
+mod hdb;
 mod json;
 mod query;
-mod storage;
+mod rdb;
 
 /// The in-memory database shared amongst all clients.
 ///
 /// This database will be shared via `Arc`, so to mutate the internal map we're
 /// going to use a `Mutex` for interior mutability.
 pub struct DbServer {
-    db: RwLock<Db>,
+    db: RwLock<InMemDb>,
 }
 
 fn res_to_string(res: &Res<'_>) -> String {
@@ -87,7 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // structure. Note the usage of `Arc` here which will be used to ensure that
     // each independently spawned client will have a reference to the in-memory
     // database.
-    let initial_db = Db::new();
+    let initial_db = InMemDb::new();
     let db = Arc::new(DbServer {
         db: RwLock::new(initial_db),
     });

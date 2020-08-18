@@ -1,4 +1,5 @@
-use crate::db::{Error, Reply, Res};
+use crate::cmd::{Reply, Res};
+use crate::err::Error;
 use serde_json::Number as JsonNum;
 use serde_json::Number;
 pub use serde_json::{json, Map, Value as Json};
@@ -15,7 +16,7 @@ pub fn json_string(val: &Json) -> Option<&str> {
 pub fn json_len(val: &Json) -> usize {
     match val {
         Json::Array(ref arr) => arr.len(),
-        _ => 1
+        _ => 1,
     }
 }
 //TODO make generic comparison
@@ -149,7 +150,7 @@ fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> R
         (Json::Bool(x), Json::Bool(y)) => {
             let cmp = Cmp::new(*x, *y);
             Ok(p(&cmp))
-        },
+        }
         _ => Err(Error::BadType),
     }
 }
@@ -199,7 +200,7 @@ pub fn append(val: &mut Json, elem: Json) {
     }
 }
 
-fn add_id(val: Json, id: usize) -> Result<Json, Error>{
+fn add_id(val: Json, id: usize) -> Result<Json, Error> {
     match val {
         Json::Object(mut obj) => {
             obj.insert("_id".to_string(), Json::from(id));
@@ -209,24 +210,22 @@ fn add_id(val: Json, id: usize) -> Result<Json, Error>{
     }
 }
 
-pub fn insert<'a>(val: &'a mut Json, arg: Json, id: &'a mut usize) -> Result<usize, Error>{
+pub fn insert<'a>(val: &'a mut Json, arg: Json, id: &'a mut usize) -> Result<usize, Error> {
     match val {
-        Json::Array(ref mut arr) => {
-            match arg {
-                Json::Array(arg) => {
-                    let n = arg.len();
-                    for e in arg {
-                        arr.push(add_id(e, *id)?);
-                        *id += 1;
-                    }
-                    Ok(n)
+        Json::Array(ref mut arr) => match arg {
+            Json::Array(arg) => {
+                let n = arg.len();
+                for e in arg {
+                    arr.push(add_id(e, *id)?);
+                    *id += 1;
                 }
-                val => {
-                    arr.push(val);
-                    Ok(1)
-                },
+                Ok(n)
             }
-        }
+            val => {
+                arr.push(val);
+                Ok(1)
+            }
+        },
         val => {
             let arr = vec![val.clone(), arg];
             *val = Json::from(arr);

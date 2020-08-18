@@ -1,7 +1,72 @@
-use crate::db::{Cmd, Db, Error, QueryCmd, Filter};
+use crate::cmd::{Cmd, QueryCmd};
+use crate::err::Error;
+use crate::rdb::InMemDb;
 
-use crate::json::{*};
+use crate::json::*;
+
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum Filter {
+    #[serde(rename = "==")]
+    Eq(String, Json),
+    #[serde(rename = "!=")]
+    NotEq(String, Json),
+    #[serde(rename = ">")]
+    Gt(String, Json),
+    #[serde(rename = "<")]
+    Lt(String, Json),
+    #[serde(rename = ">=")]
+    Gte(String, Json),
+    #[serde(rename = "<=")]
+    Lte(String, Json),
+    #[serde(rename = "&&")]
+    And(Box<Filter>, Box<Filter>),
+    #[serde(rename = "||")]
+    Or(Box<Filter>, Box<Filter>),
+}
+
+impl Filter {
+    pub fn apply(&self, row: &Json) -> Result<bool, Error> {
+        match self {
+            Filter::Eq(key, val) => Filter::eval(row, key, val, &json_eq),
+            Filter::NotEq(key, val) => Filter::eval(row, key, val, &json_neq),
+            Filter::Lt(key, val) => Filter::eval(row, key, val, &json_lt),
+            Filter::Gt(key, val) => Filter::eval(row, key, val, &json_gt),
+            Filter::Lte(key, val) => Filter::eval(row, key, val, &json_lte),
+            Filter::Gte(key, val) => Filter::eval(row, key, val, &json_gte),
+            Filter::And(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x && y),
+            Filter::Or(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x || y),
+        }
+    }
+
+    fn eval_gate(
+        row: &Json,
+        lhs: &Filter,
+        rhs: &Filter,
+        p: &dyn Fn(bool, bool) -> bool,
+    ) -> Result<bool, Error> {
+        let lhs = lhs.apply(row)?;
+        let rhs = rhs.apply(row)?;
+        Ok(p(lhs, rhs))
+    }
+
+    fn eval(
+        row: &Json,
+        key: &str,
+        val: &Json,
+        predicate: &dyn Fn(&Json, &Json) -> Result<bool, Error>,
+    ) -> Result<bool, Error> {
+        match row {
+            Json::Object(obj) => match obj.get(key) {
+                Some(v) => predicate(v, val),
+                None => Ok(false),
+            },
+            v => predicate(v, val),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct KeyedMax {
@@ -10,8 +75,11 @@ struct KeyedMax {
 }
 
 impl KeyedMax {
-    fn new<S:Into<String>>(col_name: S, key: String) -> Self {
-        KeyedMax { col_name: col_name.into(), key }
+    fn new<S: Into<String>>(col_name: S, key: String) -> Self {
+        KeyedMax {
+            col_name: col_name.into(),
+            key,
+        }
     }
 }
 
@@ -40,7 +108,7 @@ fn key_obj_max(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                             max
                         };
                     }
-                    _=> return Err(Error::BadObject),
+                    _ => return Err(Error::BadObject),
                 }
             }
             Ok(max.map(|x| x.clone()))
@@ -48,7 +116,6 @@ fn key_obj_max(key: &str, val: &Json) -> Result<Option<Json>, Error> {
         val => Ok(Some(val.clone())),
     }
 }
-
 
 fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
     match val {
@@ -62,7 +129,7 @@ fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                     Json::Object(obj) => {
                         min = if let Some(val) = obj.get(key) {
                             if let Some(max) = min {
-                                if json_lt(val, max).map_err(|_|Error::BadType)? {
+                                if json_lt(val, max).map_err(|_| Error::BadType)? {
                                     Some(val)
                                 } else {
                                     Some(max)
@@ -74,7 +141,7 @@ fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                             min
                         };
                     }
-                    _=> return Err(Error::BadObject),
+                    _ => return Err(Error::BadObject),
                 }
             }
             println!("min = {:?}", min);
@@ -94,7 +161,9 @@ impl KeyedAggregate for KeyedMax {
             })?;
             println!("{:?}", val);
             if let Some(val) = val {
-                let entry = output.entry(k.clone()).or_insert_with(|| Json::from(JsonObj::new()));
+                let entry = output
+                    .entry(k.clone())
+                    .or_insert_with(|| Json::from(JsonObj::new()));
                 match entry {
                     Json::Object(ref mut obj) => {
                         obj.insert(self.col_name.clone(), val);
@@ -114,8 +183,11 @@ struct KeyedMin {
 }
 
 impl KeyedMin {
-    fn new<S:Into<String>>(col_name: S, key: String) -> Self {
-        KeyedMin { col_name: col_name.into(), key }
+    fn new<S: Into<String>>(col_name: S, key: String) -> Self {
+        KeyedMin {
+            col_name: col_name.into(),
+            key,
+        }
     }
 }
 
@@ -130,7 +202,9 @@ impl KeyedAggregate for KeyedMin {
             })?;
             println!("{:?}", val);
             if let Some(val) = val {
-                let entry = output.entry(k.clone()).or_insert_with(|| Json::from(JsonObj::new()));
+                let entry = output
+                    .entry(k.clone())
+                    .or_insert_with(|| Json::from(JsonObj::new()));
                 match entry {
                     Json::Object(ref mut obj) => {
                         obj.insert(self.col_name.clone(), val);
@@ -150,14 +224,16 @@ struct KeyedLast {
 }
 
 impl KeyedLast {
-    fn new<S:Into<String>>(name: S, key: String) -> Self {
-        KeyedLast { col_name: name.into(), key }
+    fn new<S: Into<String>>(name: S, key: String) -> Self {
+        KeyedLast {
+            col_name: name.into(),
+            key,
+        }
     }
 }
 
 impl KeyedAggregate for KeyedLast {
     fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
-
         for (k, v) in input {
             let val = match v {
                 Json::Array(s) => {
@@ -165,7 +241,7 @@ impl KeyedAggregate for KeyedLast {
                         return Ok(());
                     }
                     s[s.len() - 1].clone()
-                },
+                }
                 val => val.clone(),
             };
             output.insert(k.clone(), val);
@@ -181,8 +257,11 @@ struct KeyedFirst {
 }
 
 impl KeyedFirst {
-    fn new<S:Into<String>>(col_name: S, key: String) -> Self {
-        Self { col_name: col_name.into(), key }
+    fn new<S: Into<String>>(col_name: S, key: String) -> Self {
+        Self {
+            col_name: col_name.into(),
+            key,
+        }
     }
 }
 
@@ -195,11 +274,11 @@ impl KeyedAggregate for KeyedFirst {
                         return Ok(());
                     }
                     s[0].clone()
-                },
+                }
                 val => val.clone(),
             };
             output.insert(key.clone(), val);
-        };
+        }
         Ok(())
     }
 }
@@ -211,15 +290,20 @@ struct Count {
 }
 
 impl Count {
-    fn new<S:Into<String>>(col_name: S, key: String) -> Count {
-        Self { col_name: col_name.into(), key }
+    fn new<S: Into<String>>(col_name: S, key: String) -> Count {
+        Self {
+            col_name: col_name.into(),
+            key,
+        }
     }
 }
 
 impl KeyedAggregate for Count {
     fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
         for (key, val) in input {
-            let entry = output.entry(key.to_string()).or_insert_with(||Json::Object(JsonObj::new()));
+            let entry = output
+                .entry(key.to_string())
+                .or_insert_with(|| Json::Object(JsonObj::new()));
             match entry {
                 Json::Object(ref mut obj) => {
                     obj.insert(self.col_name.clone(), Json::from(json_len(val)));
@@ -487,7 +571,7 @@ impl<'a> Aggregate<'a> for Avg {
 type JsonObj = Map<String, Json>;
 
 fn eq(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_eq(x,y)
+    json_eq(x, y)
 }
 
 fn neq(x: &Json, y: &Json) -> Result<bool, Error> {
@@ -608,7 +692,7 @@ where
 }
 
 pub struct Query<'a> {
-    db: &'a Db,
+    db: &'a InMemDb,
     cmd: QueryCmd,
 }
 
@@ -622,7 +706,7 @@ fn is_aggregation(cmds: &[(String, Cmd)]) -> bool {
 }
 
 impl<'a> Query<'a> {
-    pub fn from(db: &'a Db, cmd: QueryCmd) -> Self {
+    pub fn from(db: &'a InMemDb, cmd: QueryCmd) -> Self {
         Self { db, cmd }
     }
 
@@ -650,7 +734,7 @@ impl<'a> Query<'a> {
     fn eval_from(&self) -> Result<&'a [Json], Error> {
         //TODO remove cloning
         match self.db.get(self.cmd.from.to_string()) {
-            Ok(Json::Array(rows)) => Ok(rows),
+            Ok(Json::Array(rows)) => Ok(rows.as_ref()),
             Ok(_) => return Err(Error::NotArray),
             Err(_) => return Err(Error::BadFrom),
         }
@@ -676,11 +760,10 @@ impl<'a> Query<'a> {
             match selects {
                 Json::Object(obj) => {
                     let mut ids = Vec::new();
-                    for (_, v)  in obj {
-
+                    for (_, v) in obj {
                         match v {
                             Json::Object(obj) => {
-                                for (_, v)  in obj {
+                                for (_, v) in obj {
                                     ids.push(json_to_string(v).ok_or(Error::BadSelect)?);
                                 }
                             }
@@ -720,18 +803,19 @@ impl<'a> Query<'a> {
                                 let mut obj = obj.clone();
                                 obj.remove(by_key);
                                 obj
-                            },
+                            }
                             _ => unimplemented!(),
                         }
                     };
                     let by_val_str = json_to_string(by_val).ok_or(Error::BadKey)?;
-                    let entry = keyed_data.entry(by_val_str).or_insert_with(|| Json::Array(Vec::new()));
+                    let entry = keyed_data
+                        .entry(by_val_str)
+                        .or_insert_with(|| Json::Array(Vec::new()));
                     json_push(entry, Json::from(obj));
                 }
                 None => continue,
             }
         }
-
 
         if let Some(key_aggs) = self.parse_key_aggregations()? {
             println!("key_aggs len = {:?}", key_aggs.len());
@@ -746,8 +830,6 @@ impl<'a> Query<'a> {
         } else {
             Ok(Json::Object(keyed_data))
         }
-
-
     }
 
     fn parse_key_aggregations(&self) -> Result<Option<Vec<Box<dyn KeyedAggregate>>>, Error> {
@@ -764,7 +846,7 @@ impl<'a> Query<'a> {
                                         "count" => Box::new(Count::new(col_name, key)),
                                         "get" => continue,
                                         "first" => Box::new(KeyedFirst::new(col_name, key)),
-                                        "last" => Box::new(KeyedLast::new(col_name,key)),
+                                        "last" => Box::new(KeyedLast::new(col_name, key)),
                                         "max" => Box::new(KeyedMax::new(col_name, key)),
                                         "min" => Box::new(KeyedMin::new(col_name, key)),
                                         _ => unimplemented!(),
@@ -774,10 +856,9 @@ impl<'a> Query<'a> {
                             }
                             _ => unimplemented!(),
                         }
-
                     }
                 }
-                _ => unimplemented!()
+                _ => unimplemented!(),
             }
             Ok(Some(a))
         } else {
@@ -867,25 +948,21 @@ mod tests {
 
     use serde_json::json;
 
-    fn insert<K:Into<String>>(db: &mut Db, key: K, val: Json) {
+    fn insert<K: Into<String>>(db: &mut InMemDb, key: K, val: Json) {
         db.eval_write_cmd(Cmd::Insert(key.into(), val)).unwrap();
     }
 
-    fn insert_data(db: &mut Db) {
-        insert(
-            db,
-            "t",
-            all_data(),
-        );
+    fn insert_data(db: &mut InMemDb) {
+        insert(db, "t", all_data());
     }
 
-    fn test_db() -> Db {
-        let mut db = Db::new();
+    fn test_db() -> InMemDb {
+        let mut db = InMemDb::new();
         insert_data(&mut db);
         db
     }
 
-    fn query(json: Json) -> Result<Json,Error> {
+    fn query(json: Json) -> Result<Json, Error> {
         let db = test_db();
         let cmd = serde_json::from_value(json).unwrap();
         let qry = Query::from(&db, cmd);
@@ -1098,10 +1175,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(
-            Ok(json!({"devAge": 10.750968948580091})),
-            qry
-        );
+        assert_eq!(Ok(json!({"devAge": 10.750968948580091})), qry);
     }
 
     #[test]
@@ -1125,10 +1199,7 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(
-            Ok(json!([{"_id": 0,"age":35}, {"_id": 1, "age": 28}])),
-            qry
-        );
+        assert_eq!(Ok(json!([{"_id": 0,"age":35}, {"_id": 1, "age": 28}])), qry);
     }
 
     #[test]
@@ -1226,7 +1297,6 @@ mod tests {
             qry
         );
     }
-
 
     #[test]
     fn select_last_age_by_name() {
