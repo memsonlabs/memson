@@ -1,7 +1,6 @@
-use crate::db::{self, Cmd, Db, Error, QueryCmd, Filter};
+use crate::db::{Cmd, Db, Error, QueryCmd, Filter};
 
-use crate::json::{self, *};
-use serde::{Deserialize, Serialize};
+use crate::json::{*};
 use serde_json::{Map, Value as Json};
 
 #[derive(Debug, Default)]
@@ -27,7 +26,6 @@ fn key_obj_max(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                 match val {
                     Json::Object(obj) => {
                         max = if let Some(val) = obj.get(key) {
-                            println!("{:?} > {:?}", val, max);
                             if let Some(max) = max {
                                 let is_max = json_gt(val, max).map_err(|e| Error::BadType)?;
                                 if is_max {
@@ -816,13 +814,12 @@ impl<'a> Query<'a> {
         }
         let mut output = Vec::new();
         let cmds = parse_selects_to_cmd(selects)?;
-        for (i, row) in rows.iter().enumerate() {
+        for (_, row) in rows.iter().enumerate() {
             let mut map = JsonObj::new();
             for cmd in &cmds {
                 eval_row_cmd(cmd, row, &mut map)?;
             }
             if !map.is_empty() {
-                map.insert("_id".to_string(), Json::from(i));
                 output.push(Json::from(map));
             }
         }
@@ -878,12 +875,7 @@ mod tests {
         insert(
             db,
             "t",
-            json!([
-                {"name": "james", "age": 35},
-                {"name": "ania", "age": 28, "job": "english teacher"},
-                {"name": "misha", "age": 10},
-                {"name": "ania", "age": 20}
-            ]),
+            all_data(),
         );
     }
 
@@ -903,23 +895,26 @@ mod tests {
     #[test]
     fn select_all_query() {
         let qry = query(json!({"from": "t"}));
-        let val = json!([
+        assert_eq!(Ok(all_data()), qry);
+    }
+
+    fn all_data() -> Json {
+        json!([
             {"_id": 0, "name": "james", "age": 35},
             {"_id": 1, "name": "ania", "age": 28, "job": "english teacher"},
             {"_id": 2, "name": "misha", "age": 10},
             {"_id": 3, "name": "ania", "age": 20},
-        ]);
-        assert_eq!(Ok(val), qry);
+        ])
     }
 
     #[test]
     fn select_1_prop_query() {
         let qry = query(json!({"select": "name", "from": "t"}));
         let val = json!([
-            {"_id": 0, "name": "james"},
-            {"_id": 1, "name": "ania"},
-            {"_id": 2, "name": "misha"},
-            {"_id": 3, "name": "ania"},
+            {"name": "james"},
+            {"name": "ania"},
+            {"name": "misha"},
+            {"name": "ania"},
         ]);
         assert_eq!(Ok(val), qry);
     }
@@ -927,10 +922,10 @@ mod tests {
     fn select_3_prop_query() {
         let qry = query(json!({"select": ["name", "age", "job"], "from": "t"}));
         let val = json!([
-            {"_id": 0, "name": "james", "age": 35},
-            {"_id": 1, "name": "ania", "age": 28, "job": "english teacher"},
-            {"_id": 2, "name": "misha", "age": 10},
-            {"_id": 3, "name": "ania", "age": 20},
+            {"name": "james", "age": 35},
+            {"name": "ania", "age": 28, "job": "english teacher"},
+            {"name": "misha", "age": 10},
+            {"name": "ania", "age": 20},
         ]);
         assert_eq!(Ok(val), qry);
     }

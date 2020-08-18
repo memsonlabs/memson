@@ -54,6 +54,7 @@ use std::sync::{Arc, RwLock};
 mod db;
 mod json;
 mod query;
+mod storage;
 
 /// The in-memory database shared amongst all clients.
 ///

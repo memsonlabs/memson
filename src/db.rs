@@ -263,6 +263,7 @@ impl Cmd {
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
+    BadIO,
     BadType,
     BadState,
     EmptySequence,
@@ -283,6 +284,7 @@ impl Error {
     // TODO provide more details in errors
     pub fn to_string(&self) -> String {
         let msg = match self {
+            Error::BadIO => "bad io",
             Error::BadType => "incorrect type",
             Error::BadState => "incorrect internal state",
             Error::EmptySequence => "empty sequence",
