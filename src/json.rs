@@ -1,10 +1,13 @@
-use crate::cmd::{Reply, Res};
+use crate::cmd::Response;
 use crate::err::Error;
 use serde_json::Number as JsonNum;
 use serde_json::Number;
 pub use serde_json::{json, Map, Value as Json};
+
 use std::cmp::PartialOrd;
 use std::mem;
+
+pub type JsonObj = Map<String, Json>;
 
 pub fn json_string(val: &Json) -> Option<&str> {
     match val {
@@ -233,18 +236,19 @@ pub fn insert<'a>(val: &'a mut Json, arg: Json, id: &'a mut usize) -> Result<usi
         }
     }
 }
+pub type Res<'a> = Result<Response<'a>, Error>;
 
 pub fn first(val: &Json) -> Res<'_> {
     match val {
         Json::Array(ref arr) => arr_first(arr),
-        val => Ok(Reply::Ref(val)),
+        val => Ok(Response::Ref(val)),
     }
 }
 
 pub fn last(val: &Json) -> Res<'_> {
     match val {
         Json::Array(ref arr) => arr_last(arr),
-        val => Ok(Reply::Ref(val)),
+        val => Ok(Response::Ref(val)),
     }
 }
 
@@ -258,7 +262,7 @@ pub fn sum(val: &Json) -> Result<Json, Error> {
 
 pub fn pop(val: &mut Json) -> Res<'_> {
     match val {
-        Json::Array(ref mut arr) => arr_pop(arr).map(Reply::Val),
+        Json::Array(ref mut arr) => arr_pop(arr).map(Response::Val),
         _ => Err(Error::BadType),
     }
 }
@@ -542,7 +546,7 @@ fn arr_first(s: &[Json]) -> Res<'_> {
     if s.is_empty() {
         Err(Error::EmptySequence)
     } else {
-        Ok(Reply::Ref(&s[0]))
+        Ok(Response::Ref(&s[0]))
     }
 }
 
@@ -550,7 +554,7 @@ fn arr_last(s: &[Json]) -> Res<'_> {
     if s.is_empty() {
         Err(Error::EmptySequence)
     } else {
-        Ok(Reply::Ref(&s[s.len() - 1]))
+        Ok(Response::Ref(&s[s.len() - 1]))
     }
 }
 

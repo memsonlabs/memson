@@ -1,10 +1,8 @@
-use crate::err::{Error, ParseError};
-use crate::query::{Filter, Query};
-use crate::rdb::InMemDb;
+use crate::err::ParseError;
+use crate::json::JsonObj;
+use crate::query::Filter;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-
-pub type Res<'a> = Result<Reply<'a>, Error>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct QueryCmd {
@@ -16,18 +14,19 @@ pub struct QueryCmd {
     pub filter: Option<Filter>,
 }
 
-impl QueryCmd {
-    pub fn eval(self, db: &InMemDb) -> Result<Json, Error> {
-        let qry = Query::from(db, self);
-        qry.eval()
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ReadCmd {
+    #[serde(rename = "get")]
+    Get(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum ReadCmd {}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum WriteCmd {}
+pub enum WriteCmd {
+    #[serde(rename = "set")]
+    Set(String, Json),
+    #[serde(rename = "insert")]
+    Insert(String, Vec<JsonObj>),
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Cmd {
@@ -203,20 +202,20 @@ impl Cmd {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Reply<'a> {
+pub enum Response<'a> {
     Val(Json),
     Ref(&'a Json),
     Update,
     Insert(usize),
 }
 
-impl<'a> Reply<'a> {
+impl<'a> Response<'a> {
     pub fn to_string(&self) -> String {
         match self {
-            Reply::Val(val) => val.to_string(),
-            Reply::Ref(val) => val.to_string(),
-            Reply::Update => "Updated entry ".to_string(),
-            Reply::Insert(_) => "Inserted entry ".to_string(),
+            Response::Val(val) => val.to_string(),
+            Response::Ref(val) => val.to_string(),
+            Response::Update => "Updated entry ".to_string(),
+            Response::Insert(_) => "Inserted entry ".to_string(),
         }
     }
 }

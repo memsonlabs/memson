@@ -1,66 +1,148 @@
-use crate::cmd::Cmd;
+use crate::cmd::{Cmd, QueryCmd, WriteCmd};
 use crate::err::Error;
+use crate::json::{
+    json_add_num, json_f64, json_gt, json_len, json_lt, json_num_gt, json_num_lt, json_push,
+    json_string, json_to_string, Json, JsonObj,
+};
+use crate::query::Filter;
+use serde_json::Map;
+use std::collections::BTreeMap;
+use std::mem::transmute;
+use std::path::Path;
 
-use crate::json::*;
+use sled::Db as Sled;
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value as Json};
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum Filter {
-    #[serde(rename = "==")]
-    Eq(String, Json),
-    #[serde(rename = "!=")]
-    NotEq(String, Json),
-    #[serde(rename = ">")]
-    Gt(String, Json),
-    #[serde(rename = "<")]
-    Lt(String, Json),
-    #[serde(rename = ">=")]
-    Gte(String, Json),
-    #[serde(rename = "<=")]
-    Lte(String, Json),
-    #[serde(rename = "&&")]
-    And(Box<Filter>, Box<Filter>),
-    #[serde(rename = "||")]
-    Or(Box<Filter>, Box<Filter>),
+fn json_obj(val: Json) -> JsonObj {
+    match val {
+        Json::Object(map) => map,
+        _ => panic!("bad obj"),
+    }
 }
 
-impl Filter {
-    pub fn apply(&self, row: &JsonObj) -> Result<bool, Error> {
-        match self {
-            Filter::Eq(key, val) => Filter::eval(row, key, val, &json_eq),
-            Filter::NotEq(key, val) => Filter::eval(row, key, val, &json_neq),
-            Filter::Lt(key, val) => Filter::eval(row, key, val, &json_lt),
-            Filter::Gt(key, val) => Filter::eval(row, key, val, &json_gt),
-            Filter::Lte(key, val) => Filter::eval(row, key, val, &json_lte),
-            Filter::Gte(key, val) => Filter::eval(row, key, val, &json_gte),
-            Filter::And(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x && y),
-            Filter::Or(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x || y),
+#[derive(Debug, PartialEq)]
+struct Meta {
+    key: String,
+    id: usize,
+}
+
+fn bad_io(_: sled::Error) -> Error {
+    Error::BadIO
+}
+
+fn read_meta(sled: &mut Sled) -> Result<Vec<String>, Error> {
+    Ok(if let Some(v) = sled.get("_meta").map_err(bad_io)? {
+        bincode::deserialize(v.as_ref()).unwrap()
+    } else {
+        Vec::new()
+    })
+}
+
+#[derive(Debug)]
+pub struct Db {
+    collections: Collections,
+    meta: Vec<String>,
+    sled: Sled,
+}
+
+#[derive(Debug)]
+pub enum WrCmd {
+    Insert(String, Vec<JsonObj>),
+}
+
+impl Db {
+    fn read_table_id(sled: &Sled, key: &str) -> Result<usize, Error> {
+        let key = "_len_".to_string() + key;
+        let v = sled.get(key).map_err(bad_io)?.ok_or(Error::BadIO)?;
+        let val: usize = bincode::deserialize(v.as_ref()).unwrap();
+        Ok(val)
+    }
+
+    fn read_row(sled: &Sled, key: &str, i: usize) -> Result<Option<JsonObj>, Error> {
+        let key = "_id_".to_string() + key + "_" + &i.to_string();
+        if let Some(v) = sled.get(&key).map_err(bad_io)? {
+            println!("reading {:?}", v.as_ref());
+            let val = json_obj(serde_json::from_slice(v.as_ref()).unwrap());
+            println!("deserialized {:?}", val);
+            Ok(Some(val))
+        } else {
+            Ok(None)
         }
     }
 
-    fn eval_gate(
-        row: &JsonObj,
-        lhs: &Filter,
-        rhs: &Filter,
-        p: &dyn Fn(bool, bool) -> bool,
-    ) -> Result<bool, Error> {
-        let lhs = lhs.apply(row)?;
-        let rhs = rhs.apply(row)?;
-        Ok(p(lhs, rhs))
+    fn write_row(&mut self, key: &str, i: usize, row: &JsonObj) -> Result<(), Error> {
+        let key = "_id_".to_string() + key + "_" + &i.to_string();
+        let val = serde_json::to_vec(row).unwrap();
+        println!("writing {:?}", &val);
+        self.sled.insert(key, val).unwrap();
+        self.sled.flush().unwrap();
+        Ok(())
     }
 
-    fn eval(
-        row: &JsonObj,
-        key: &str,
-        val: &Json,
-        predicate: &dyn Fn(&Json, &Json) -> Result<bool, Error>,
-    ) -> Result<bool, Error> {
-        match row.get(key) {
-            Some(v) => predicate(v, val),
-            None => Ok(false),
+    pub(crate) fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        let mut sled = sled::open(path).map_err(bad_io)?;
+        let meta = read_meta(&mut sled)?;
+        let mut map = BTreeMap::new();
+        for key in &meta {
+            let mut coll = Collection::new();
+            let id = Self::read_table_id(&sled, key)?;
+            coll.id = id;
+            for i in 0..id {
+                if let Some(row) = Self::read_row(&sled, key, i)? {
+                    coll.push(row);
+                }
+            }
+            map.insert(key.clone(), coll);
         }
+        let collections = Collections::from(map);
+        Ok(Self {
+            collections,
+            meta,
+            sled,
+        })
+    }
+
+    fn eval_write(&mut self, cmd: WrCmd) -> Result<(), Error> {
+        match cmd {
+            WrCmd::Insert(key, rows) => {
+                if let Some(coll) = self.get_mut(&key) {
+                    coll.extend(rows);
+                } else {
+                    self.add_table_meta(&key)?;
+                    self.write_table_id(&key, rows.len());
+                    for (i, row) in rows.iter().enumerate() {
+                        self.write_row(&key, i, row)?;
+                    }
+                    let mut col = Collection::new();
+                    col.extend(rows);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn write_table_id(&mut self, key: &str, id: usize) -> Result<(), Error> {
+        let key = "_len_".to_string() + key;
+        let val: Vec<u8> = bincode::serialize(&id).unwrap();
+        self.sled.insert(key, val).map_err(bad_io)?;
+        Ok(())
+    }
+
+    fn add_table_meta(&mut self, key: &str) -> Result<(), Error> {
+        self.meta.push(key.to_string());
+        self.write_table_meta()?;
+        Ok(())
+    }
+
+    fn get_mut(&mut self, key: &str) -> Option<&mut Collection> {
+        self.collections.colls.get_mut(key)
+    }
+
+    fn write_table_meta(&mut self) -> Result<(), Error> {
+        self.sled.insert(
+            "_meta",
+            bincode::serialize(&self.meta).map_err(|_| Error::BadIO)?,
+        );
+        Ok(())
     }
 }
 
@@ -320,6 +402,15 @@ trait Aggregate<'a> {
     fn apply(self) -> Option<Json>;
 }
 
+fn is_aggregation(cmds: &[(String, Cmd)]) -> bool {
+    for (_, cmd) in cmds {
+        if !cmd.is_aggregate() {
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Debug, Default)]
 struct Get {
     col_name: String,
@@ -564,191 +655,222 @@ impl<'a> Aggregate<'a> for Avg {
     }
 }
 
-type JsonObj = Map<String, Json>;
-
-fn eq(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_eq(x, y)
+#[derive(Debug, Default)]
+pub struct Collections {
+    colls: BTreeMap<String, Collection>,
 }
 
-fn neq(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_neq(x, y)
-}
-
-fn lt(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_lt(x, y)
-}
-
-fn lte(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_lte(x, y)
-}
-
-fn gt(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_gt(x, y)
-}
-
-fn gte(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_gte(x, y)
-}
-
-//TODO pass vec to remove clone
-fn parse_selects_to_cmd(selects: &[Json]) -> Result<Vec<Cmd>, Error> {
-    let mut cmds = Vec::new();
-    for select in selects {
-        cmds.extend(Cmd::parse(select.clone()).map_err(|_| Error::BadSelect)?);
+impl Collections {
+    pub fn new() -> Self {
+        Self::default()
     }
-    Ok(cmds)
-}
 
-fn eval_aggregate(cmd: Cmd, rows: &[Json]) -> Result<Option<Json>, Error> {
-    match cmd {
-        Cmd::Sum(key) => eval_agg(&key, rows, Sum::new()),
-        Cmd::Max(key) => eval_agg(&key, rows, Max::new()),
-        Cmd::Min(key) => eval_agg(&key, rows, Min::new()),
-        Cmd::Avg(key) => eval_agg(&key, rows, Avg::new()),
-        Cmd::First(key) => eval_agg(&key, rows, First::new()),
-        Cmd::Last(key) => eval_agg(&key, rows, Last::new()),
-        Cmd::Var(key) => eval_var(&key, rows),
-        Cmd::Dev(key) => eval_dev(&key, rows),
-        _ => return Err(Error::NotAggregate),
+    fn from(colls: BTreeMap<String, Collection>) -> Self {
+        Self { colls }
     }
-}
 
-fn eval_nonaggregate(cmds: &[(String, Cmd)], rows: &[Json]) -> Result<Json, Error> {
-    let mut out = Vec::new();
-    for row in rows {
-        let mut obj = None;
-        for cmd in cmds {
-            eval_row(&mut obj, cmd, row)?;
-        }
-        if let Some(obj) = obj {
-            out.push(Json::from(obj));
-        }
+    fn get(&self, key: &str) -> Option<&Collection> {
+        self.colls.get(key)
     }
-    Ok(Json::Array(out))
-}
 
-fn eval_row(out: &mut Option<JsonObj>, cmd: &(String, Cmd), row: &Json) -> Result<(), Error> {
-    match (&cmd.1, row) {
-        (Cmd::Get(key), Json::Object(obj)) => {
-            if let Some(val) = obj.get(key) {
-                let key = cmd.0.to_string();
-                let val = val.clone();
-                if let Some(ref mut obj) = out {
-                    obj.insert(key, val);
-                } else {
-                    let mut o = JsonObj::new();
-                    o.insert("_id".to_string(), obj.get("_id").unwrap().clone());
-                    o.insert(key, val);
-                    *out = Some(o);
-                }
+    fn set<K: Into<String>>(&mut self, key: K, coll: Collection) {
+        self.colls.insert(key.into(), coll);
+    }
+
+    pub(crate) fn insert<K: Into<String>>(&mut self, key: K, rows: Vec<JsonObj>) {
+        let coll = self
+            .colls
+            .entry(key.into())
+            .or_insert_with(|| Collection::new());
+        coll.extend(rows);
+    }
+
+    /*
+    fn add_meta(&mut self, key: &str) -> Result<(), Error> {
+        if let Some(ivec) = self.hdb.get("meta", ).map_err(|_| Error::BadIO)? {
+            let mut meta: Vec<String> = bincode::deserialize(&ivec).map_err(|_| Error::BadIO)?;
+            if meta.iter().find(|x| *x == key).is_none() {
+                meta.push(key.to_string());
+                self.hdb.insert(key, bincode::serialize(&meta).unwrap());
             }
-            Ok(())
+        } else {
+            let meta = vec![key.to_string()];
+            self.hdb.insert(key, bincode::serialize(&meta).unwrap());
         }
-        _ => unimplemented!(),
+        Ok(())
+    }
+    */
+
+    pub fn exec(&self, cmd: QueryCmd) -> Result<Json, Error> {
+        let qry = Query::from(self, cmd);
+        qry.exec()
     }
 }
 
-fn eval_var(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
-    let mut avg = Avg::new();
-    for row in rows {
-        if let Some(val) = row.get(key) {
-            avg.aggregate(val)?;
-        }
-    }
-    if avg.count == 0 {
-        return Ok(None);
-    }
-    let mut var = Var::from(avg.avg(), avg.count);
-    for row in rows {
-        if let Some(val) = row.get(key) {
-            var.aggregate(val)?;
-        }
-    }
-    Ok(var.apply())
+#[derive(Debug, Default, PartialEq)]
+pub struct Collection {
+    rows: Vec<JsonObj>,
+    id: usize,
 }
 
-fn eval_dev(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
-    let r = match eval_var(key, rows)? {
-        Some(val) => val.as_f64().map(|x| Json::from(x.sqrt())),
-        None => None,
-    };
-    Ok(r)
+impl Collection {
+    pub fn new() -> Collection {
+        Self::default()
+    }
+
+    fn rows(&self) -> &[JsonObj] {
+        &self.rows
+    }
+
+    fn push(&mut self, obj: JsonObj) {
+        self.rows.push(obj)
+    }
+
+    fn extend(&mut self, rows: Vec<JsonObj>) {
+        let n = rows.len();
+        self.rows.extend(rows);
+        self.id += n;
+    }
 }
 
-fn eval_agg<'a, A: 'a>(key: &str, rows: &'a [Json], mut agg: A) -> Result<Option<Json>, Error>
-where
-    A: Aggregate<'a>,
-{
-    for row in rows {
-        if let Some(val) = row.get(key) {
-            agg.aggregate(val)?;
-        }
-    }
-    Ok(agg.apply())
-}
-/*
-pub struct Query<'a> {
-    db: &'a InMemDb,
+struct Query<'a> {
+    db: &'a Collections,
     cmd: QueryCmd,
 }
 
-fn is_aggregation(cmds: &[(String, Cmd)]) -> bool {
-    for (_, cmd) in cmds {
-        if !cmd.is_aggregate() {
-            return false;
-        }
-    }
-    true
-}
-
 impl<'a> Query<'a> {
-    pub fn from(db: &'a InMemDb, cmd: QueryCmd) -> Self {
+    fn from(db: &'a Collections, cmd: QueryCmd) -> Self {
         Self { db, cmd }
     }
 
-    pub fn eval(&self) -> Result<Json, Error> {
+    fn exec(&self) -> Result<Json, Error> {
         let rows = self.eval_from()?;
-        if let Some(ref filter) = self.cmd.filter {
-            let filtered_rows = self.eval_where(rows, filter.clone())?;
-            self.eval_select(&filtered_rows)
+        let gate = if let Some(ref filter) = self.cmd.filter {
+            Some(self.eval_where(rows, filter.clone())?) //TODO remove clone
         } else {
-            self.eval_select(rows)
-        }
+            None
+        };
+        self.eval_select(rows, gate)
     }
 
-
-    fn eval_where(&self, rows: &[Json], filter: Filter) -> Result<Vec<Json>, Error> {
-        let mut filtered_rows = Vec::new();
+    fn eval_where(&self, rows: &[JsonObj], filter: Filter) -> Result<Vec<bool>, Error> {
+        let mut gate = vec![false; rows.len()];
         for (i, row) in rows.iter().enumerate() {
             if filter.apply(row)? {
-                let obj_row = add_row_id(row, i)?;
-                filtered_rows.push(obj_row);
+                gate[i] = true;
             }
         }
-        Ok(filtered_rows)
+        Ok(gate)
     }
 
-    fn eval_from(&self) -> Result<&'a [Json], Error> {
-        //TODO remove cloning
+    fn eval_from(&self) -> Result<&[JsonObj], Error> {
         match self.db.get(&self.cmd.from) {
-            Some(Json::Array(rows)) => Ok(rows.as_ref()),
-            Some(_) => return Err(Error::NotArray),
+            Some(col) => Ok(col.rows()),
             None => return Err(Error::BadFrom),
         }
     }
 
     // TODO remove cloning
-    fn eval_select(&self, rows: &[Json]) -> Result<Json, Error> {
+    fn eval_select(&self, rows: &[JsonObj], gate: Option<Vec<bool>>) -> Result<Json, Error> {
+        println!("gate={:?}", gate);
         if let Some(by) = &self.cmd.by {
-            self.eval_keyed_select(by, rows)
+            self.eval_keyed_select(by, rows, gate)
         } else {
             match &self.cmd.selects {
-                Some(Json::Array(ref selects)) => self.eval_selects(selects, rows),
-                Some(Json::String(s)) => self.eval_selects(&vec![Json::from(s.to_string())], rows),
-                Some(Json::Object(obj)) => self.eval_obj_selects(obj.clone(), rows),
+                Some(Json::Array(ref selects)) => self.eval_selects(selects, rows, gate),
+                Some(Json::String(s)) => {
+                    self.eval_selects(&vec![Json::from(s.to_string())], rows, gate)
+                }
+                Some(Json::Object(obj)) => self.eval_obj_selects(obj.clone(), rows, gate),
                 Some(_) => Err(Error::BadSelect),
-                None => self.eval_select_all(rows),
+                None => self.eval_select_all(rows, gate),
             }
+        }
+    }
+
+    //TODO remove clones
+    fn eval_selects(
+        &self,
+        selects: &[Json],
+        rows: &[JsonObj],
+        gate: Option<Vec<bool>>,
+    ) -> Result<Json, Error> {
+        if selects.is_empty() {
+            return self.eval_select_all(rows, gate);
+        }
+        let mut output = Vec::new();
+        let cmds = parse_selects_to_cmd(selects)?;
+
+        if let Some(gate) = gate {
+            for (row, include) in rows.iter().zip(gate.iter()) {
+                if !include {
+                    continue;
+                }
+                let mut map = JsonObj::new();
+                for cmd in &cmds {
+                    eval_row_cmd(cmd, row, &mut map)?;
+                }
+                if !map.is_empty() {
+                    output.push(Json::from(map));
+                }
+            }
+        } else {
+            for row in rows.iter() {
+                let mut map = JsonObj::new();
+                for cmd in &cmds {
+                    eval_row_cmd(cmd, row, &mut map)?;
+                }
+                if !map.is_empty() {
+                    output.push(Json::from(map));
+                }
+            }
+        }
+        Ok(Json::from(output))
+    }
+
+    fn eval_select_all(&self, rows: &[JsonObj], gate: Option<Vec<bool>>) -> Result<Json, Error> {
+        let mut output = Vec::new();
+
+        if let Some(gate) = gate {
+            for (row, include) in rows.iter().zip(gate.into_iter()).take(50) {
+                //TODO paginate
+                if include {
+                    output.push(row.clone());
+                }
+            }
+        } else {
+            for row in rows.iter().take(50) {
+                output.push(row.clone());
+            }
+        }
+
+        Ok(Json::from(output))
+    }
+
+    fn eval_obj_selects(
+        &self,
+        obj: JsonObj,
+        rows: &[JsonObj],
+        gate: Option<Vec<bool>>,
+    ) -> Result<Json, Error> {
+        if obj.is_empty() {
+            return self.eval_select_all(rows, gate);
+        }
+        let mut cmds = Vec::new();
+        for (key, val) in obj {
+            let cmd = Cmd::parse_cmd(val).map_err(|_| Error::BadSelect)?;
+            cmds.push((key, cmd));
+        }
+        if is_aggregation(&cmds) {
+            let mut out = JsonObj::new();
+            for (key, cmd) in cmds {
+                if let Some(val) = eval_aggregate(cmd, rows, &gate)? {
+                    out.insert(key, val);
+                }
+            }
+            Ok(Json::Object(out))
+        } else {
+            eval_nonaggregate(&cmds, rows, gate)
         }
     }
 
@@ -776,14 +898,24 @@ impl<'a> Query<'a> {
         }
     }
 
-    fn eval_keyed_select(&self, by: &Json, rows: &[Json]) -> Result<Json, Error> {
+    fn eval_keyed_select(
+        &self,
+        by: &Json,
+        rows: &[JsonObj],
+        gate: Option<Vec<bool>>,
+    ) -> Result<Json, Error> {
         let by_key: &str = match by {
             Json::String(s) => s.as_ref(),
-            _ => unimplemented!(),
+            _ => unimplemented!(), //TODO support different by types
         };
         let ids = self.parse_ids()?; // TODO remove unwrap
         let mut keyed_data: Map<String, Json> = Map::new();
-        for row in rows {
+        for (i, row) in rows.iter().enumerate() {
+            if let Some(gate) = &gate {
+                if !gate[i] {
+                    continue;
+                }
+            }
             match row.get(by_key) {
                 Some(by_val) => {
                     let obj: JsonObj = if let Some(ids) = &ids {
@@ -795,14 +927,9 @@ impl<'a> Query<'a> {
                         }
                         obj
                     } else {
-                        match row {
-                            Json::Object(obj) => {
-                                let mut obj = obj.clone();
-                                obj.remove(by_key);
-                                obj
-                            }
-                            _ => unimplemented!(),
-                        }
+                        let mut obj = row.clone();
+                        obj.remove(by_key);
+                        obj
                     };
                     let by_val_str = json_to_string(by_val).ok_or(Error::BadKey)?;
                     let entry = keyed_data
@@ -862,62 +989,21 @@ impl<'a> Query<'a> {
             Ok(None)
         }
     }
-
-    fn eval_obj_selects(&self, obj: JsonObj, rows: &[Json]) -> Result<Json, Error> {
-        if obj.is_empty() {
-            return self.eval_select_all(rows);
-        }
-        let mut cmds = Vec::new();
-        for (key, val) in obj {
-            let cmd = Cmd::parse_cmd(val).map_err(|_| Error::BadSelect)?;
-            cmds.push((key, cmd));
-        }
-        if is_aggregation(&cmds) {
-            let mut out = JsonObj::new();
-            for (key, cmd) in cmds {
-                if let Some(val) = eval_aggregate(cmd, rows)? {
-                    out.insert(key, val);
-                }
-            }
-            Ok(Json::Object(out))
-        } else {
-            eval_nonaggregate(&cmds, rows)
-        }
-    }
-
-    //TODO remove clones
-    fn eval_selects(&self, selects: &[Json], rows: &[Json]) -> Result<Json, Error> {
-        if selects.is_empty() {
-            return self.eval_select_all(rows);
-        }
-        let mut output = Vec::new();
-        let cmds = parse_selects_to_cmd(selects)?;
-        for (_, row) in rows.iter().enumerate() {
-            let mut map = JsonObj::new();
-            for cmd in &cmds {
-                eval_row_cmd(cmd, row, &mut map)?;
-            }
-            if !map.is_empty() {
-                output.push(Json::from(map));
-            }
-        }
-        Ok(Json::from(output))
-    }
-
-    fn eval_select_all(&self, rows: &[Json]) -> Result<Json, Error> {
-        let mut output = Vec::new();
-        for (i, row) in rows.iter().take(50).enumerate() {
-            let row = add_row_id(row, i)?;
-            output.push(row);
-        }
-        Ok(Json::from(output))
-    }
 }
 
-fn eval_row_cmd(cmd: &Cmd, row: &Json, obj: &mut JsonObj) -> Result<(), Error> {
+//TODO pass vec to remove clone
+fn parse_selects_to_cmd(selects: &[Json]) -> Result<Vec<Cmd>, Error> {
+    let mut cmds = Vec::new();
+    for select in selects {
+        cmds.extend(Cmd::parse(select.clone()).map_err(|_| Error::BadSelect)?);
+    }
+    Ok(cmds)
+}
+
+fn eval_row_cmd(cmd: &Cmd, row: &JsonObj, obj: &mut JsonObj) -> Result<(), Error> {
     match cmd {
         Cmd::Get(key) => {
-            if let Some(val) = row.get(&key) {
+            if let Some(val) = row.get(key) {
                 obj.insert(key.to_string(), val.clone());
             }
             Ok(())
@@ -926,17 +1012,115 @@ fn eval_row_cmd(cmd: &Cmd, row: &Json, obj: &mut JsonObj) -> Result<(), Error> {
     }
 }
 
-fn add_row_id(row: &Json, i: usize) -> Result<Json, Error> {
-    match row {
-        Json::Object(obj) => {
-            let mut obj = obj.clone();
-            if let None = obj.get("_id") {
-                obj.insert("_id".to_string(), Json::from(i));
+fn eval_row(out: &mut Option<JsonObj>, cmd: &(String, Cmd), obj: &JsonObj) -> Result<(), Error> {
+    match &cmd.1 {
+        Cmd::Get(key) => {
+            if let Some(val) = obj.get(key) {
+                let key = cmd.0.to_string();
+                let val = val.clone();
+                if let Some(ref mut obj) = out {
+                    obj.insert(key, val);
+                } else {
+                    let mut o = JsonObj::new();
+                    o.insert("_id".to_string(), obj.get("_id").unwrap().clone());
+                    o.insert(key, val);
+                    *out = Some(o);
+                }
             }
-            Ok(Json::from(obj))
+            Ok(())
         }
-        _ => Err(Error::BadObject),
+        _ => unimplemented!(),
     }
+}
+
+fn eval_var(key: &str, rows: &[JsonObj], gate: &Option<Vec<bool>>) -> Result<Option<Json>, Error> {
+    let mut avg = Avg::new();
+    for row in rows {
+        if let Some(val) = row.get(key) {
+            avg.aggregate(val)?;
+        }
+    }
+    if avg.count == 0 {
+        return Ok(None);
+    }
+    let mut var = Var::from(avg.avg(), avg.count);
+    for row in rows {
+        if let Some(val) = row.get(key) {
+            var.aggregate(val)?;
+        }
+    }
+    Ok(var.apply())
+}
+
+fn eval_dev(key: &str, rows: &[JsonObj], gate: &Option<Vec<bool>>) -> Result<Option<Json>, Error> {
+    let r = match eval_var(key, rows, gate)? {
+        Some(val) => val.as_f64().map(|x| Json::from(x.sqrt())),
+        None => None,
+    };
+    Ok(r)
+}
+
+fn eval_agg<'a, A: 'a>(
+    key: &str,
+    rows: &'a [JsonObj],
+    mut agg: A,
+    gate: &Option<Vec<bool>>,
+) -> Result<Option<Json>, Error>
+where
+    A: Aggregate<'a>,
+{
+    for (i, row) in rows.iter().enumerate() {
+        if let Some(gate) = gate {
+            if !gate[i] {
+                continue;
+            }
+        }
+        if let Some(obj) = row.get(key) {
+            agg.aggregate(obj)?;
+        }
+    }
+    Ok(agg.apply())
+}
+
+fn eval_aggregate(
+    cmd: Cmd,
+    rows: &[JsonObj],
+    gate: &Option<Vec<bool>>,
+) -> Result<Option<Json>, Error> {
+    match cmd {
+        Cmd::Sum(key) => eval_agg(&key, rows, Sum::new(), gate),
+        Cmd::Max(key) => eval_agg(&key, rows, Max::new(), gate),
+        Cmd::Min(key) => eval_agg(&key, rows, Min::new(), gate),
+        Cmd::Avg(key) => eval_agg(&key, rows, Avg::new(), gate),
+        Cmd::First(key) => eval_agg(&key, rows, First::new(), gate),
+        Cmd::Last(key) => eval_agg(&key, rows, Last::new(), gate),
+        Cmd::Var(key) => eval_var(&key, rows, gate),
+        Cmd::Dev(key) => eval_dev(&key, rows, gate),
+        _ => return Err(Error::NotAggregate),
+    }
+}
+
+fn eval_nonaggregate(
+    cmds: &[(String, Cmd)],
+    rows: &[JsonObj],
+    gate: Option<Vec<bool>>,
+) -> Result<Json, Error> {
+    let mut out = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        if let Some(gate) = &gate {
+            if !gate[i] {
+                continue;
+            }
+        }
+        let mut obj = None;
+        for cmd in cmds {
+            eval_row(&mut obj, cmd, row)?;
+        }
+        if let Some(obj) = obj {
+            out.push(Json::from(obj));
+        }
+    }
+    Ok(Json::Array(out))
 }
 
 #[cfg(test)]
@@ -945,40 +1129,80 @@ mod tests {
 
     use serde_json::json;
 
-    fn insert<K: Into<String>>(db: &mut InMemDb, key: K, val: Json) {
-        db.set(key, val);
+    fn insert_data(col: &mut Collection) {
+        for row in rows() {
+            col.push(row);
+        }
     }
 
-    fn insert_data(db: &mut InMemDb) {
-        insert(db, "t", all_data());
-    }
 
-    fn test_db() -> InMemDb {
-        let mut db = InMemDb::new();
-        insert_data(&mut db);
+
+    fn test_db(path: &str) -> Collections {
+        let mut db = Collections::new();
+        let mut col = Collection::new();
+        insert_data(&mut col);
+        db.set("t", col);
         db
     }
 
     fn query(json: Json) -> Result<Json, Error> {
-        let db = test_db();
+        let db = test_db("test_col");
         let cmd = serde_json::from_value(json).unwrap();
-        let qry = Query::from(&db, cmd);
-        qry.eval()
+        db.exec(cmd)
+    }
+
+    #[test]
+    fn insert_persists_ok() {
+        let key = "t".to_string();
+        let path = "insert_persists";
+        {
+            let mut db = Db::open(path).unwrap();
+            db.eval_write(WrCmd::Insert(key.clone(), rows())).unwrap();
+        }
+        {
+            let db = Db::open(path).unwrap();
+            let rows = rows();
+            let id = rows.len();
+            let coll = Collection { rows, id };
+            assert_eq!(db.meta, vec![key]);
+            assert_eq!(Some(&coll), db.collections.get("t"));
+        }
     }
 
     #[test]
     fn select_all_query() {
         let qry = query(json!({"from": "t"}));
-        assert_eq!(Ok(all_data()), qry);
+        let rows: Vec<Json> = rows().into_iter().map(Json::from).collect();
+        assert_eq!(Ok(Json::from(rows)), qry);
     }
 
-    fn all_data() -> Json {
-        json!([
-            {"_id": 0, "name": "james", "age": 35},
-            {"_id": 1, "name": "ania", "age": 28, "job": "english teacher"},
-            {"_id": 2, "name": "misha", "age": 10},
-            {"_id": 3, "name": "ania", "age": 20},
-        ])
+    fn rows() -> Vec<JsonObj> {
+        vec![
+            json_obj(json!({"_id": 0, "name": "james", "age": 35})),
+            json_obj(json!({"_id": 1, "name": "ania", "age": 28, "job": "english teacher"})),
+            json_obj(json!({"_id": 2, "name": "misha", "age": 10})),
+            json_obj(json!({"_id": 3, "name": "ania", "age": 20})),
+        ]
+    }
+
+    #[test]
+    fn db_write_read_rows() {
+        let key = "t".to_string();
+        let path = "read_write_rows";
+        {
+            let mut db = Db::open(path).unwrap();
+
+            for (i, row) in rows().iter().enumerate() {
+                db.write_row(&key, i, row).unwrap();
+            }
+        }
+        {
+            let rows = rows();
+            let mut sled = sled::open(path).unwrap();
+            for (i, row) in rows.into_iter().enumerate() {
+                assert_eq!(Some(row), Db::read_row(&sled, &key, i).unwrap());
+            }
+        }
     }
 
     #[test]
@@ -992,6 +1216,7 @@ mod tests {
         ]);
         assert_eq!(Ok(val), qry);
     }
+
     #[test]
     fn select_3_prop_query() {
         let qry = query(json!({"select": ["name", "age", "job"], "from": "t"}));
@@ -1464,4 +1689,3 @@ mod tests {
         );
     }
 }
-*/

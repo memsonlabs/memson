@@ -45,7 +45,8 @@ use tokio::net::TcpListener;
 use tokio::stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
-use crate::cmd::{Cmd, Res};
+use crate::cmd::Cmd;
+use crate::json::Res;
 use crate::rdb::InMemDb;
 use futures::SinkExt;
 use std::env;
@@ -59,6 +60,7 @@ mod hdb;
 mod json;
 mod query;
 mod rdb;
+mod table;
 
 /// The in-memory database shared amongst all clients.
 ///
@@ -139,18 +141,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn handle_request(line: &str, server: &Arc<DbServer>) -> String {
-    let cmd: Cmd = match serde_json::from_str(line) {
+fn handle_request(line: &str, _server: &Arc<DbServer>) -> String {
+    let _cmd: Cmd = match serde_json::from_str(line) {
         Ok(cmd) => cmd,
         Err(_) => return "error: bad json".to_string(),
     };
-    if cmd.is_mutation() {
-        let mut db = server.db.write().unwrap();
-        let r = db.eval_write_cmd(cmd);
-        res_to_string(&r)
-    } else {
-        let db = server.db.read().unwrap();
-        let r = db.eval_read_cmd(cmd);
-        res_to_string(&r)
-    }
+    unimplemented!()
 }

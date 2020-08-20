@@ -1,20 +1,41 @@
-use crate::cmd::{Cmd, QueryCmd, Reply, Res};
 use crate::err::Error;
-use crate::json::*;
+use crate::json::JsonObj;
+use crate::table::Table;
+use either::Either;
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Default)]
 pub struct InMemDb {
     cache: BTreeMap<String, Json>,
-    ids: BTreeMap<String, usize>,
 }
 
 impl InMemDb {
+    pub fn from(cache: BTreeMap<String, Json>) -> Self {
+        Self { cache }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
+    pub fn set<K: Into<String>>(&mut self, key: K, val: Json) -> Option<Json> {
+        self.cache.insert(key.into(), val)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Json> {
+        self.cache.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Json> {
+        self.cache.get_mut(key)
+    }
+
+    pub fn rm(&mut self, key: &str) -> Option<Json> {
+        self.cache.remove(key)
+    }
+
+    /*
     fn eval_append(&mut self, key: String, arg: Json) -> Res<'_> {
         let val = self.get_mut(key)?;
         append(val, arg);
@@ -89,7 +110,7 @@ impl InMemDb {
 
     fn eval_get(&self, key: String) -> Res<'_> {
         match self.cache.get(&key) {
-            Some(val) => Ok(Reply::Ref(val)),
+            Some(val) => Ok(Response::Ref(val)),
             None => Err(Error::UnknownKey(key)),
         }
     }
@@ -203,8 +224,11 @@ impl InMemDb {
     pub fn get_mut(&mut self, key: String) -> Result<&mut Json, Error> {
         self.cache.get_mut(&key).ok_or(Error::UnknownKey(key))
     }
+
+    */
 }
 
+/*
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -214,7 +238,7 @@ pub mod tests {
     pub fn append<K: Into<String>, V: Into<Json>>(db: &mut InMemDb, key: K, val: V) {
         let key = key.into();
         let val = val.into();
-        db.eval_write_cmd(Cmd::Append(key, val)).unwrap();
+        //db.eval_write_cmd(Cmd::Append(key, val)).unwrap();
     }
 
     fn insert_data(db: &mut InMemDb) {
@@ -248,7 +272,7 @@ pub mod tests {
     fn json_val(r: Reply<'_>) -> Json {
         match r {
             Reply::Val(val) => val.clone(),
-            Reply::Ref(val) => val.clone(),
+            Response::Ref(val) => val.clone(),
             _ => Json::from("bad state"),
         }
     }
@@ -659,3 +683,4 @@ pub mod tests {
         );
     }
 }
+*/
