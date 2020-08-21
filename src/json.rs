@@ -558,6 +558,20 @@ fn arr_last(s: &[Json]) -> Res<'_> {
     }
 }
 
+pub fn json_obj(val: &Json) -> Result<&JsonObj, Error> {
+    match val {
+        Json::Object(obj) => Ok(obj),
+        _ => Err(Error::ExpectedObj),
+    }
+}
+
+pub fn into_json_obj(val: Json) -> Result<JsonObj, Error> {
+    match val {
+        Json::Object(obj) => Ok(obj),
+        _ => Err(Error::ExpectedObj),
+    }
+}
+
 fn json_arr_avg(s: &[Json]) -> Result<Json, Error> {
     let mut total = 0.0f64;
     for val in s {

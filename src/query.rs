@@ -1,8 +1,9 @@
-use crate::cmd::Cmd;
+use crate::cmd::{Cmd, QueryCmd};
 use crate::err::Error;
 
 use crate::json::*;
 
+use crate::inmemdb::InMemDb;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json};
 
@@ -685,7 +686,7 @@ where
     }
     Ok(agg.apply())
 }
-/*
+
 pub struct Query<'a> {
     db: &'a InMemDb,
     cmd: QueryCmd,
@@ -705,7 +706,7 @@ impl<'a> Query<'a> {
         Self { db, cmd }
     }
 
-    pub fn eval(&self) -> Result<Json, Error> {
+    pub fn exec(&self) -> Result<Json, Error> {
         let rows = self.eval_from()?;
         if let Some(ref filter) = self.cmd.filter {
             let filtered_rows = self.eval_where(rows, filter.clone())?;
@@ -715,11 +716,11 @@ impl<'a> Query<'a> {
         }
     }
 
-
     fn eval_where(&self, rows: &[Json], filter: Filter) -> Result<Vec<Json>, Error> {
         let mut filtered_rows = Vec::new();
         for (i, row) in rows.iter().enumerate() {
-            if filter.apply(row)? {
+            let obj = json_obj(row)?;
+            if filter.apply(obj)? {
                 let obj_row = add_row_id(row, i)?;
                 filtered_rows.push(obj_row);
             }
@@ -729,10 +730,10 @@ impl<'a> Query<'a> {
 
     fn eval_from(&self) -> Result<&'a [Json], Error> {
         //TODO remove cloning
-        match self.db.get(&self.cmd.from) {
-            Some(Json::Array(rows)) => Ok(rows.as_ref()),
-            Some(_) => return Err(Error::NotArray),
-            None => return Err(Error::BadFrom),
+        match self.db.get(self.cmd.from.to_string()) {
+            Ok(Json::Array(rows)) => Ok(rows.as_ref()),
+            Ok(_) => return Err(Error::NotArray),
+            Err(_) => return Err(Error::BadFrom),
         }
     }
 
@@ -962,7 +963,7 @@ mod tests {
         let db = test_db();
         let cmd = serde_json::from_value(json).unwrap();
         let qry = Query::from(&db, cmd);
-        qry.eval()
+        qry.exec()
     }
 
     #[test]
@@ -1463,4 +1464,3 @@ mod tests {
         );
     }
 }
-*/

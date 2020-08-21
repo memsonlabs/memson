@@ -1,7 +1,6 @@
+use crate::cmd::{Cmd, QueryCmd, Response};
 use crate::err::Error;
-use crate::json::JsonObj;
-use crate::table::Table;
-use either::Either;
+use crate::json::*;
 use serde_json::Value as Json;
 use std::collections::BTreeMap;
 
@@ -23,42 +22,35 @@ impl InMemDb {
         self.cache.insert(key.into(), val)
     }
 
-    pub fn get(&self, key: &str) -> Option<&Json> {
-        self.cache.get(key)
-    }
-
-    pub fn get_mut(&mut self, key: &str) -> Option<&mut Json> {
-        self.cache.get_mut(key)
-    }
-
     pub fn rm(&mut self, key: &str) -> Option<Json> {
         self.cache.remove(key)
     }
 
-    /*
     fn eval_append(&mut self, key: String, arg: Json) -> Res<'_> {
         let val = self.get_mut(key)?;
         append(val, arg);
-        Ok(Reply::Update)
+        Ok(Response::Update)
     }
 
     fn eval_insert(&mut self, key: String, arg: Json) -> Res<'_> {
         let n = self.insert(key, arg)?;
-        Ok(Reply::Insert(n))
+        Ok(Response::Insert(n))
     }
 
     fn gen_insert_entry(&mut self, key: String) -> (&mut Json, &mut usize) {
-        let val = self
-            .cache
-            .entry(key.clone())
-            .or_insert_with(|| Json::Array(vec![]));
-        let id = self.ids.entry(key).or_insert(0);
-        (val, id)
+        unimplemented!()
     }
 
     fn insert(&mut self, key: String, arg: Json) -> Result<usize, Error> {
         let (val, id) = self.gen_insert_entry(key);
         insert(val, arg, id)
+    }
+
+    pub fn add_table<K: Into<String>>(&mut self, key: K, rows: Vec<JsonObj>) {
+        self.cache.insert(
+            key.into(),
+            Json::Array(rows.into_iter().map(Json::Object).collect()),
+        );
     }
 
     pub fn eval_read_cmd(&self, cmd: Cmd) -> Res<'_> {
@@ -73,7 +65,7 @@ impl InMemDb {
             Cmd::Sub(lhs, rhs) => self.eval_sub(lhs, rhs),
             Cmd::Mul(lhs, rhs) => self.eval_mul(lhs, rhs),
             Cmd::Div(lhs, rhs) => self.eval_div(lhs, rhs),
-            Cmd::Sum(key) => self.eval_sum(key).map(Reply::Val),
+            Cmd::Sum(key) => self.eval_sum(key).map(Response::Val),
             Cmd::First(key) => self.eval_first(key),
             Cmd::Last(key) => self.eval_last(key),
             Cmd::Var(key) => self.eval_var(key),
@@ -117,7 +109,7 @@ impl InMemDb {
 
     fn eval_len(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
-        Ok(Reply::Val(len(val)))
+        Ok(Response::Val(len(val)))
     }
 
     fn eval_sum(&self, key: String) -> Result<Json, Error> {
@@ -126,13 +118,13 @@ impl InMemDb {
     }
 
     fn eval_query(&self, cmd: QueryCmd) -> Res<'_> {
-        cmd.eval(self).map(Reply::Val)
+        unimplemented!()
     }
 
     fn eval_min(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
         match json_min(val) {
-            Ok(Some(val)) => Ok(Reply::Val(val)),
+            Ok(Some(val)) => Ok(Response::Val(val)),
             Ok(None) => Err(Error::EmptySequence),
             Err(err) => Err(err),
         }
@@ -141,7 +133,7 @@ impl InMemDb {
     fn eval_max(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
         match json_max(val) {
-            Ok(Some(val)) => Ok(Reply::Val(val)),
+            Ok(Some(val)) => Ok(Response::Val(val)),
             Ok(None) => Err(Error::EmptySequence),
             Err(err) => Err(err),
         }
@@ -149,12 +141,12 @@ impl InMemDb {
 
     fn eval_avg(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
-        avg(val).map(Reply::Val)
+        avg(val).map(Response::Val)
     }
 
     fn eval_dev(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
-        dev(val).map(Reply::Val)
+        dev(val).map(Response::Val)
     }
 
     fn eval_first(&self, key: String) -> Res<'_> {
@@ -174,16 +166,16 @@ impl InMemDb {
 
     fn eval_set(&mut self, key: String, val: Json) -> Res<'_> {
         let reply = if let Some(_) = self.cache.insert(key, val) {
-            Reply::Update
+            Response::Update
         } else {
-            Reply::Insert(1) // TODO remove hardcoded value
+            Response::Insert(1) // TODO remove hardcoded value
         };
         Ok(reply)
     }
 
     fn eval_var(&self, key: String) -> Res<'_> {
         let val = self.get(key)?;
-        var(val).map(Reply::Val)
+        var(val).map(Response::Val)
     }
 
     fn eval_bin_fn(
@@ -200,7 +192,7 @@ impl InMemDb {
             Some(val) => val,
             None => return Err(Error::UnknownKey(rhs)),
         };
-        f(lhs, rhs).map(Reply::Val)
+        f(lhs, rhs).map(Response::Val)
     }
     fn eval_add(&self, lhs: String, rhs: String) -> Res<'_> {
         self.eval_bin_fn(lhs, rhs, &add)
@@ -224,8 +216,6 @@ impl InMemDb {
     pub fn get_mut(&mut self, key: String) -> Result<&mut Json, Error> {
         self.cache.get_mut(&key).ok_or(Error::UnknownKey(key))
     }
-
-    */
 }
 
 /*
@@ -269,9 +259,9 @@ pub mod tests {
         v.as_f64().unwrap()
     }
 
-    fn json_val(r: Reply<'_>) -> Json {
+    fn json_val(r: Response<'_>) -> Json {
         match r {
-            Reply::Val(val) => val.clone(),
+            Response::Val(val) => val.clone(),
             Response::Ref(val) => val.clone(),
             _ => Json::from("bad state"),
         }

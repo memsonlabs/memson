@@ -1,4 +1,4 @@
-use crate::cmd::{Cmd, QueryCmd, WriteCmd};
+use crate::cmd::{Cmd, QueryCmd};
 use crate::err::Error;
 use crate::json::{
     json_add_num, json_f64, json_gt, json_len, json_lt, json_num_gt, json_num_lt, json_push,
@@ -7,7 +7,6 @@ use crate::json::{
 use crate::query::Filter;
 use serde_json::Map;
 use std::collections::BTreeMap;
-use std::mem::transmute;
 use std::path::Path;
 
 use sled::Db as Sled;
@@ -1033,7 +1032,12 @@ fn eval_row(out: &mut Option<JsonObj>, cmd: &(String, Cmd), obj: &JsonObj) -> Re
 
 fn eval_var(key: &str, rows: &[JsonObj], gate: &Option<Vec<bool>>) -> Result<Option<Json>, Error> {
     let mut avg = Avg::new();
-    for row in rows {
+    for (i, row) in rows.iter().enumerate() {
+        if let Some(gate) = gate {
+            if !gate[i] {
+                continue;
+            }
+        }
         if let Some(val) = row.get(key) {
             avg.aggregate(val)?;
         }

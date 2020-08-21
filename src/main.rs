@@ -46,8 +46,8 @@ use tokio::stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
 use crate::cmd::Cmd;
+use crate::inmemdb::InMemDb;
 use crate::json::Res;
-use crate::rdb::InMemDb;
 use futures::SinkExt;
 use std::env;
 use std::error::Error;
@@ -56,11 +56,10 @@ use std::sync::{Arc, RwLock};
 mod cmd;
 mod db;
 mod err;
-mod hdb;
+mod inmemdb;
 mod json;
+mod ondiskdb;
 mod query;
-mod rdb;
-mod table;
 
 /// The in-memory database shared amongst all clients.
 ///
