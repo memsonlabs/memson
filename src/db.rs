@@ -36,6 +36,9 @@ impl Memson {
                 Some(val) => Ok(Response::Ref(val)),
                 None => Err(Error::BadKey),
             },
+            ReadCmd::Query(cmd) => {
+                self.db.exec(cmd).map(Response::Val)
+            }
         }
     }
 
@@ -44,12 +47,12 @@ impl Memson {
             WriteCmd::Set(key, val) => {
                 self.cache.hdb.set(&key, &val)?;
                 self.cache.rdb.set(key, val);
+                Ok(())
             }
             WriteCmd::Insert(key, rows) => {
-                self.db.insert(key, rows);
+                self.db.insert(key, rows)
             }
         }
-        Ok(())
     }
 }
 

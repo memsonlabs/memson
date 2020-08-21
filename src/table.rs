@@ -54,9 +54,7 @@ impl Db {
     fn read_row(sled: &Sled, key: &str, i: usize) -> Result<Option<JsonObj>, Error> {
         let key = "_id_".to_string() + key + "_" + &i.to_string();
         if let Some(v) = sled.get(&key).map_err(bad_io)? {
-            println!("reading {:?}", v.as_ref());
             let val = json_obj(serde_json::from_slice(v.as_ref()).unwrap());
-            println!("deserialized {:?}", val);
             Ok(Some(val))
         } else {
             Ok(None)
@@ -66,7 +64,6 @@ impl Db {
     fn write_row(&mut self, key: &str, i: usize, row: &JsonObj) -> Result<(), Error> {
         let key = "_id_".to_string() + key + "_" + &i.to_string();
         let val = serde_json::to_vec(row).unwrap();
-        println!("writing {:?}", &val);
         self.sled.insert(key, val).unwrap();
         self.sled.flush().unwrap();
         Ok(())
@@ -108,7 +105,7 @@ impl Db {
             coll.extend(rows);
         } else {
             self.add_table_meta(&key)?;
-            self.write_table_id(&key, rows.len());
+            self.write_table_id(&key, rows.len())?;
             for (i, row) in rows.iter().enumerate() {
                 self.write_row(&key, i, row)?;
             }
@@ -139,11 +136,13 @@ impl Db {
         self.sled.insert(
             "_meta",
             bincode::serialize(&self.meta).map_err(|_| Error::BadIO)?,
-        );
+        ).map_err(bad_io)?;
         Ok(())
     }
 
-
+    pub fn exec(&self, cmd: QueryCmd) -> Result<Json, Error> {
+        self.collections.exec(cmd)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -222,7 +221,6 @@ fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                     _ => return Err(Error::BadObject),
                 }
             }
-            println!("min = {:?}", min);
             Ok(min.map(|x| x.clone()))
         }
         val => Ok(Some(val.clone())),
@@ -232,12 +230,10 @@ fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
 impl KeyedAggregate for KeyedMax {
     fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
         for (k, v) in input {
-            println!("finding max of {:?}", v);
             let val = key_obj_max(&self.key, v).map_err(|err| {
                 eprintln!("{:?}", err);
                 Error::BadType
             })?;
-            println!("{:?}", val);
             if let Some(val) = val {
                 let entry = output
                     .entry(k.clone())
@@ -273,12 +269,10 @@ impl KeyedAggregate for KeyedMin {
     //TODO refactor to make generic between this and KeyedMax as the logic is too similar
     fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
         for (k, v) in input {
-            println!("finding max of {:?}", v);
             let val = key_obj_min(&self.key, v).map_err(|err| {
                 eprintln!("{:?}", err);
                 Error::BadType
             })?;
-            println!("{:?}", val);
             if let Some(val) = val {
                 let entry = output
                     .entry(k.clone())
@@ -739,7 +733,7 @@ impl Table {
     }
 }
 
-struct Query<'a> {
+pub struct Query<'a> {
     db: &'a Collections,
     cmd: QueryCmd,
 }
@@ -778,7 +772,6 @@ impl<'a> Query<'a> {
 
     // TODO remove cloning
     fn eval_select(&self, rows: &[JsonObj], gate: Option<Vec<bool>>) -> Result<Json, Error> {
-        println!("gate={:?}", gate);
         if let Some(by) = &self.cmd.by {
             self.eval_keyed_select(by, rows, gate)
         } else {
@@ -948,7 +941,6 @@ impl<'a> Query<'a> {
         }
 
         if let Some(key_aggs) = self.parse_key_aggregations()? {
-            println!("key_aggs len = {:?}", key_aggs.len());
             if key_aggs.is_empty() {
                 return Ok(Json::from(keyed_data));
             }

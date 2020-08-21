@@ -140,7 +140,6 @@ fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                     _ => return Err(Error::BadObject),
                 }
             }
-            println!("min = {:?}", min);
             Ok(min.map(|x| x.clone()))
         }
         val => Ok(Some(val.clone())),

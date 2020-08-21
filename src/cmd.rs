@@ -18,6 +18,8 @@ pub struct QueryCmd {
 pub enum ReadCmd {
     #[serde(rename = "get")]
     Get(String),
+    #[serde(rename = "query")]
+    Query(QueryCmd),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
