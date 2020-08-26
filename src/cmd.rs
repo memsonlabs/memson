@@ -1,5 +1,4 @@
 use crate::err::ParseError;
-use crate::json::JsonObj;
 use crate::query::Filter;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -12,22 +11,6 @@ pub struct QueryCmd {
     pub by: Option<Json>,
     #[serde(rename = "where")]
     pub filter: Option<Filter>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum ReadCmd {
-    #[serde(rename = "get")]
-    Get(String),
-    #[serde(rename = "query")]
-    Query(QueryCmd),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum WriteCmd {
-    #[serde(rename = "set")]
-    Set(String, Json),
-    #[serde(rename = "insert")]
-    Insert(String, Vec<JsonObj>),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,6 +29,8 @@ pub enum Cmd {
     Min(String),
     #[serde(rename = "avg")]
     Avg(String),
+    #[serde(rename = "delete")]
+    Delete(String),
     #[serde(rename = "dev")]
     Dev(String),
     #[serde(rename = "sum")]
@@ -70,6 +55,8 @@ pub enum Cmd {
     Query(QueryCmd),
     #[serde(rename = "insert")]
     Insert(String, Json),
+    #[serde(rename = "keys")]
+    Keys(Option<usize>),
 }
 
 impl Cmd {
@@ -138,7 +125,7 @@ impl Cmd {
                 }
                 Ok(cmds)
             }
-            _ => return Err(ParseError::BadCmd),
+            _ => Err(ParseError::BadCmd),
         }
     }
 
@@ -162,28 +149,7 @@ impl Cmd {
     fn parse_arg(arg: Json, f: &dyn Fn(String) -> Cmd) -> Result<Cmd, ParseError> {
         match arg {
             Json::String(key) => Ok(f(key)),
-            val => return Err(ParseError::BadArgument(val)),
-        }
-    }
-
-    pub fn is_mutation(&self) -> bool {
-        match self {
-            Cmd::Append(_, _) | Cmd::Set(_, _) | Cmd::Pop(_) | Cmd::Insert(_, _) => true,
-            Cmd::Get(_)
-            | Cmd::Count(_)
-            | Cmd::Max(_)
-            | Cmd::Min(_)
-            | Cmd::Dev(_)
-            | Cmd::Avg(_)
-            | Cmd::Mul(_, _)
-            | Cmd::Div(_, _)
-            | Cmd::Add(_, _)
-            | Cmd::Sub(_, _)
-            | Cmd::Sum(_)
-            | Cmd::First(_)
-            | Cmd::Last(_)
-            | Cmd::Var(_)
-            | Cmd::Query(_) => false,
+            val => Err(ParseError::BadArgument(val)),
         }
     }
 
@@ -199,25 +165,6 @@ impl Cmd {
             | Cmd::Sum(_)
             | Cmd::Var(_) => true,
             _ => false,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Response<'a> {
-    Val(Json),
-    Ref(&'a Json),
-    Update,
-    Insert(usize),
-}
-
-impl<'a> Response<'a> {
-    pub fn to_string(&self) -> String {
-        match self {
-            Response::Val(val) => val.to_string(),
-            Response::Ref(val) => val.to_string(),
-            Response::Update => "Updated entry ".to_string(),
-            Response::Insert(_) => "Inserted entry ".to_string(),
         }
     }
 }

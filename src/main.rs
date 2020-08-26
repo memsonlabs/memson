@@ -1,56 +1,9 @@
-//! A "tiny database" and accompanying protocol
-//!
-//! This example shows the usage of shared state amongst all connected clients,
-//! namely a database of key/value pairs. Each connected client can send a
-//! series of GET/SET commands to query the current value of a key or set the
-//! value of a key.
-//!
-//! This example has a simple protocol you can use to interact with the server.
-//! To run, first run this in one terminal window:
-//!
-//!     cargo run --example tinydb
-//!
-//! and next in another windows run:
-//!
-//!     cargo run --example connect 127.0.0.1:8080
-//!
-//! In the `connect` window you can type in commands where when you hit enter
-//! you'll get a response from the server for that command. An example session
-//! is:
-//!
-//!
-//!     $ cargo run --example connect 127.0.0.1:8080
-//!     GET foo
-//!     foo = bar
-//!     GET FOOBAR
-//!     error: no key FOOBAR
-//!     SET FOOBAR my awesome string
-//!     set FOOBAR = `my awesome string`, previous: None
-//!     SET foo tokio
-//!     set foo = `tokio`, previous: Some("bar")
-//!     GET foo
-//!     foo = tokio
-//!
-//! Namely you can issue two forms of commands:
-//!
-//! * `GET $key` - this will fetch the value of `$key` from the database and
-//!   return it. The server's database is initially populated with the key `foo`
-//!   set to the value `bar`
-//! * `SET $key $value` - this will set the value of `$key` to `$value`,
-//!   returning the previous value, if any.
-
-#![warn(rust_2018_idioms)]
-
-use tokio::net::TcpListener;
-use tokio::stream::StreamExt;
-use tokio_util::codec::{Framed, LinesCodec};
-
-use crate::cmd::Cmd;
-use crate::inmemdb::InMemDb;
-use crate::json::Res;
-use futures::SinkExt;
-use std::env;
-use std::error::Error;
+use crate::cmd::{Cmd, QueryCmd};
+use crate::db::Memson;
+use crate::err::Error;
+use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder};
+use serde::Serialize;
+use serde_json::Value as Json;
 use std::sync::{Arc, RwLock};
 
 mod cmd;
@@ -61,89 +14,142 @@ mod json;
 mod ondiskdb;
 mod query;
 
-/// The in-memory database shared amongst all clients.
-///
-/// This database will be shared via `Arc`, so to mutate the internal map we're
-/// going to use a `Mutex` for interior mutability.
-pub struct DbServer {
-    db: RwLock<InMemDb>,
-}
+type MemsonServer = Arc<RwLock<Memson>>;
 
-fn res_to_string(res: &Res<'_>) -> String {
-    match res {
-        Ok(val) => val.to_string(),
-        Err(err) => err.to_string(),
+fn http_resp<T: Serialize>(r: Result<T, Error>) -> HttpResponse {
+    match r {
+        Ok(val) => HttpResponse::Ok().json(val),
+        Err(err) => HttpResponse::Ok().json(err.to_string()),
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    // Parse the address we're going to run this server on
-    // and set up our TCP listener to accept connections.
-    let addr = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:8080".to_string());
+fn http_opt_resp<T: Serialize>(r: Result<Option<T>, Error>) -> HttpResponse {
+    match r {
+        Ok(Some(val)) => HttpResponse::Ok().json(val),
+        Ok(None) => HttpResponse::Ok().json(Json::Null),
+        Err(err) => HttpResponse::Ok().json(err.to_string()),
+    }
+}
 
-    let mut listener = TcpListener::bind(&addr).await?;
-    println!("Listening on: {}", addr);
-
-    // Create the shared state of this server that will be shared amongst all
-    // clients. We populate the initial database and then create the `Database`
-    // structure. Note the usage of `Arc` here which will be used to ensure that
-    // each independently spawned client will have a reference to the in-memory
-    // database.
-    let initial_db = InMemDb::new();
-    let db = Arc::new(DbServer {
-        db: RwLock::new(initial_db),
-    });
-
-    loop {
-        match listener.accept().await {
-            Ok((socket, _)) => {
-                // After getting a new connection first we see a clone of the database
-                // being created, which is creating a new reference for this connected
-                // client to use.
-                let db = db.clone();
-
-                // Like with other small servers, we'll `spawn` this client to ensure it
-                // runs concurrently with all other clients. The `move` keyword is used
-                // here to move ownership of our db handle into the async closure.
-                tokio::spawn(async move {
-                    // Since our protocol is line-based we use `tokio_codecs`'s `LineCodec`
-                    // to convert our stream of bytes, `socket`, into a `Stream` of lines
-                    // as well as convert our line based responses into a stream of bytes.
-                    let mut lines = Framed::new(socket, LinesCodec::new());
-
-                    // Here for every line we get back from the `Framed` decoder,
-                    // we parse the request, and if it's valid we generate a response
-                    // based on the values in the database.
-                    while let Some(result) = lines.next().await {
-                        match result {
-                            Ok(line) => {
-                                let response = handle_request(&line, &db);
-
-                                if let Err(e) = lines.send(response.as_str()).await {
-                                    println!("error on sending response; error = {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                println!("error on decoding from socket; error = {:?}", e);
-                            }
-                        }
-                    }
-
-                    // The connection will be closed at this point as `lines.next()` has returned `None`.
-                });
+fn eval(db: web::Data<MemsonServer>, cmd: Cmd) -> HttpResponse {
+    match cmd {
+        Cmd::Add(lhs, rhs) => {
+            let db = db.read().unwrap();
+            http_resp(db.add(&lhs, &rhs))
+        }
+        Cmd::Avg(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.avg(&key))
+        }
+        Cmd::Append(key, val) => {
+            let mut db = db.write().unwrap();
+            match db.append(key, val) {
+                Ok(_) => HttpResponse::Ok().json("appended"),
+                Err(err) => HttpResponse::Ok().json(err.to_string()),
             }
-            Err(e) => println!("error accepting socket; error = {:?}", e),
+        }
+        Cmd::Count(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.count(&key))
+        }
+        Cmd::Delete(key) => {
+            let mut db = db.write().unwrap();
+            http_opt_resp(db.delete(&key))
+        }
+        Cmd::Dev(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.dev(&key))
+        }
+        Cmd::Div(lhs, rhs) => {
+            let db = db.read().unwrap();
+            http_resp(db.div(&lhs, &rhs))
+        }
+        Cmd::First(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.first(&key))
+        }
+        Cmd::Last(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.last(&key))
+        }
+        Cmd::Max(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.max(&key))
+        }
+        Cmd::Min(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.min(&key))
+        }
+        Cmd::Insert(key, val) => {
+            let mut db = db.write().unwrap();
+            http_resp(db.insert(key, val))
+        }
+        Cmd::Var(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.var(&key))
+        }
+        Cmd::Get(key) => {
+            let db = db.read().unwrap();
+            http_resp(db.get(&key))
+        }
+        Cmd::Keys(page) => {
+            let db = db.read().unwrap();
+            HttpResponse::Ok().json(db.keys(page))
+        }
+        Cmd::Mul(lhs, rhs) => {
+            let db = db.read().unwrap();
+            http_resp(db.mul(&lhs, &rhs))
+        }
+        Cmd::Pop(key) => {
+            let mut db = db.write().unwrap();
+            http_resp(db.pop(&key))
+        }
+        Cmd::Set(key, val) => {
+            let mut db = db.write().unwrap();
+            http_opt_resp(db.set(key, val))
+        }
+        Cmd::Sub(lhs, rhs) => {
+            let db = db.read().unwrap();
+            http_resp(db.sub(&lhs, &rhs))
+        }
+        Cmd::Sum(key) => {
+            let db = db.read().unwrap();
+            http_opt_resp(db.sum(&key))
+        }
+        Cmd::Query(cmd) => {
+            let db = db.read().unwrap();
+            http_resp(db.query(cmd))
         }
     }
 }
 
-fn handle_request(line: &str, _server: &Arc<DbServer>) -> String {
-    let _cmd: Cmd = match serde_json::from_str(line) {
-        Ok(cmd) => cmd,
-        Err(_) => return "error: bad json".to_string(),
-    };
-    unimplemented!()
+async fn select(cmd: web::Json<QueryCmd>, db: web::Data<MemsonServer>) -> impl Responder {
+    println!("{:?}", &cmd);
+    let db = db.read().unwrap();
+    http_resp(db.query(cmd.0))
+}
+
+async fn query(cmd: web::Json<Cmd>, db: web::Data<MemsonServer>) -> impl Responder {
+    println!("{:?}", &cmd);
+    eval(db, cmd.0)
+}
+
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
+    std::env::set_var("RUST_LOG", "actix_web=info");
+    env_logger::init();
+
+    let db = Memson::open(".").unwrap();
+    let db = Arc::new(RwLock::new(db));
+    HttpServer::new(move || {
+        App::new()
+            //enable logger
+            .wrap(middleware::Logger::default())
+            .data(db.clone())
+            .service(web::resource("/cmd").route(web::post().to(query)))
+            .service(web::resource("/select").route(web::post().to(select)))
+    })
+    .bind("127.0.0.1:8088")?
+    .run()
+    .await
 }

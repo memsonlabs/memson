@@ -108,7 +108,7 @@ fn key_obj_max(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                     _ => return Err(Error::BadObject),
                 }
             }
-            Ok(max.map(|x| x.clone()))
+            Ok(max.cloned())
         }
         val => Ok(Some(val.clone())),
     }
@@ -141,7 +141,7 @@ fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
                     _ => return Err(Error::BadObject),
                 }
             }
-            Ok(min.map(|x| x.clone()))
+            Ok(min.cloned())
         }
         val => Ok(Some(val.clone())),
     }
@@ -150,12 +150,10 @@ fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
 impl KeyedAggregate for KeyedMax {
     fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
         for (k, v) in input {
-            println!("finding max of {:?}", v);
             let val = key_obj_max(&self.key, v).map_err(|err| {
                 eprintln!("{:?}", err);
                 Error::BadType
             })?;
-            println!("{:?}", val);
             if let Some(val) = val {
                 let entry = output
                     .entry(k.clone())
@@ -191,12 +189,10 @@ impl KeyedAggregate for KeyedMin {
     //TODO refactor to make generic between this and KeyedMax as the logic is too similar
     fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
         for (k, v) in input {
-            println!("finding max of {:?}", v);
             let val = key_obj_min(&self.key, v).map_err(|err| {
                 eprintln!("{:?}", err);
                 Error::BadType
             })?;
-            println!("{:?}", val);
             if let Some(val) = val {
                 let entry = output
                     .entry(k.clone())
@@ -345,7 +341,7 @@ impl<'a> Aggregate<'a> for Last<'a> {
     }
 
     fn apply(self) -> Option<Json> {
-        self.val.map(|x| x.clone())
+        self.val.cloned()
     }
 }
 
@@ -369,7 +365,7 @@ impl<'a> Aggregate<'a> for First<'a> {
     }
 
     fn apply(self) -> Option<Json> {
-        self.val.map(|x| x.clone())
+        self.val.cloned()
     }
 }
 
@@ -440,7 +436,7 @@ impl<'a> Aggregate<'a> for Min<'a> {
     }
 
     fn apply(self) -> Option<Json> {
-        self.min.map(|x| x.clone())
+        self.min.cloned()
     }
 }
 
@@ -495,7 +491,7 @@ impl<'a> Aggregate<'a> for Max<'a> {
     }
 
     fn apply(self) -> Option<Json> {
-        self.max.map(|x| x.clone())
+        self.max.cloned()
     }
 }
 
@@ -519,7 +515,7 @@ impl Var {
 impl<'a> Aggregate<'a> for Var {
     fn aggregate(&mut self, val: &'a Json) -> Result<(), Error> {
         let mut val = val.as_f64().ok_or(Error::BadType)?;
-        val = val - self.mean;
+        val -= self.mean;
         val = val * val; //square the diff
         self.total += val;
         Ok(())
@@ -566,30 +562,6 @@ impl<'a> Aggregate<'a> for Avg {
 
 type JsonObj = Map<String, Json>;
 
-fn eq(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_eq(x, y)
-}
-
-fn neq(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_neq(x, y)
-}
-
-fn lt(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_lt(x, y)
-}
-
-fn lte(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_lte(x, y)
-}
-
-fn gt(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_gt(x, y)
-}
-
-fn gte(x: &Json, y: &Json) -> Result<bool, Error> {
-    json_gte(x, y)
-}
-
 //TODO pass vec to remove clone
 fn parse_selects_to_cmd(selects: &[Json]) -> Result<Vec<Cmd>, Error> {
     let mut cmds = Vec::new();
@@ -609,7 +581,7 @@ fn eval_aggregate(cmd: Cmd, rows: &[Json]) -> Result<Option<Json>, Error> {
         Cmd::Last(key) => eval_agg(&key, rows, Last::new()),
         Cmd::Var(key) => eval_var(&key, rows),
         Cmd::Dev(key) => eval_dev(&key, rows),
-        _ => return Err(Error::NotAggregate),
+        _ => Err(Error::NotAggregate),
     }
 }
 
@@ -730,10 +702,10 @@ impl<'a> Query<'a> {
 
     fn eval_from(&self) -> Result<&'a [Json], Error> {
         //TODO remove cloning
-        match self.db.get(self.cmd.from.to_string()) {
+        match self.db.get(&self.cmd.from) {
             Ok(Json::Array(rows)) => Ok(rows.as_ref()),
-            Ok(_) => return Err(Error::NotArray),
-            Err(_) => return Err(Error::BadFrom),
+            Ok(_) => Err(Error::ExpectedArr),
+            Err(_) => Err(Error::BadFrom),
         }
     }
 
@@ -744,7 +716,7 @@ impl<'a> Query<'a> {
         } else {
             match &self.cmd.selects {
                 Some(Json::Array(ref selects)) => self.eval_selects(selects, rows),
-                Some(Json::String(s)) => self.eval_selects(&vec![Json::from(s.to_string())], rows),
+                Some(Json::String(s)) => self.eval_selects(&[Json::from(s.to_string())], rows),
                 Some(Json::Object(obj)) => self.eval_obj_selects(obj.clone(), rows),
                 Some(_) => Err(Error::BadSelect),
                 None => self.eval_select_all(rows),
@@ -815,7 +787,6 @@ impl<'a> Query<'a> {
         }
 
         if let Some(key_aggs) = self.parse_key_aggregations()? {
-            println!("key_aggs len = {:?}", key_aggs.len());
             if key_aggs.is_empty() {
                 return Ok(Json::from(keyed_data));
             }
@@ -930,7 +901,7 @@ fn add_row_id(row: &Json, i: usize) -> Result<Json, Error> {
     match row {
         Json::Object(obj) => {
             let mut obj = obj.clone();
-            if let None = obj.get("_id") {
+            if obj.get("_id").is_none() {
                 obj.insert("_id".to_string(), Json::from(i));
             }
             Ok(Json::from(obj))

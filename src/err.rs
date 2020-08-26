@@ -1,4 +1,5 @@
 use serde_json::value::Value;
+use std::fmt;
 
 pub enum ParseError {
     BadArgument(Value),
@@ -9,23 +10,23 @@ pub enum ParseError {
 pub enum Error {
     BadIO,
     BadType,
-    BadState,
+    BadInsert,
     EmptySequence,
     BadNumber,
     UnknownKey(String),
     ExpectedObj,
+    ExpectedArr,
     FloatCmp,
     BadKey,
     BadFrom,
     BadSelect,
     BadObject,
-    BadWhere,
-    NotArray,
     NotAggregate,
 }
 
 impl Error {
     // TODO provide more details in errors
+    /*
     pub fn to_string(&self) -> String {
         let msg = match self {
             Error::BadIO => "bad io",
@@ -40,5 +41,29 @@ impl Error {
             _ => unimplemented!(),
         };
         "error: ".to_string() + msg
+    }
+    */
+}
+
+impl fmt::Display for Error {
+    // This trait requires `fmt` with this exact signature.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let msg = match self {
+            Error::BadIO => "bad io",
+            Error::BadType => "incorrect type",
+            Error::EmptySequence => "empty sequence",
+            Error::BadNumber => "bad number",
+            Error::UnknownKey(_) => "unknown key",
+            Error::ExpectedObj => "expected object",
+            Error::FloatCmp => "float comparison",
+            Error::ExpectedArr => "expected json array",
+            Error::BadKey => "bad key",
+            Error::NotAggregate => "not aggregate",
+            Error::BadInsert => "bad insert",
+            Error::BadObject => "bad object",
+            Error::BadFrom => "bad from",
+            Error::BadSelect => "bad select",
+        };
+        write!(f, "{}", "error: ".to_string() + msg)
     }
 }
