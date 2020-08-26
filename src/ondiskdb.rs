@@ -41,17 +41,26 @@ fn meta_path<P: AsRef<Path>>(path: P) -> PathBuf {
     buf
 }
 
-fn open_sled<P:AsRef<Path>>(path: P) -> Result<Sled, Error> {
+fn open_sled<P: AsRef<Path>>(path: P) -> Result<Sled, Error> {
     sled::open(db_path(&path)).map_err(|e| {
         eprintln!("{:?}", e);
         Error::BadIO
     })
 }
 
+fn get(db: &Sled, key: &str) -> Result<Option<Json>, Error> {
+    if let Some(v) = db
+        .get(key)
+        .map_err(|_| Error::BadIO)? {
+        serde_json::from_slice(v.as_ref()).map_err(|_| Error::BadIO).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
 impl<'a> OnDiskDb {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-
-        let db =open_sled(db_path(&path))?;
+        let db = open_sled(db_path(&path))?;
         let meta_db = open_sled(meta_path(path))?;
         let meta = read_meta(&meta_db)?;
         Ok(Self { db, meta_db, meta })
@@ -67,31 +76,28 @@ impl<'a> OnDiskDb {
 
     pub fn populate(&self) -> Result<InMemDb, Error> {
         let mut db = InMemDb::new();
-
         for r in self.db.iter() {
             let (k, v) = r.map_err(|_| Error::BadIO)?;
             let key = unsafe { String::from_utf8_unchecked(k.to_vec()) };
-            println!("key={:?}", key);
             let val: Json = serde_json::from_slice(&v).unwrap();
             db.set(key, val);
+        }
+        for meta in &self.meta {
+            let val = self.read_table(meta)?;
+            db.set(&meta.key, val);
         }
         Ok(db)
     }
 
-    pub(crate) fn insert(
-        &mut self,
-        key: &str,
-        val: &mut [Json],
-    ) -> Result<(), Error> {
+    pub(crate) fn insert(&mut self, key: &str, val: &mut [Json]) -> Result<(), Error> {
         self.insert_rows(key, val)
     }
-
-
 
     fn write_row(&mut self, key: &str, id: usize, row: &mut Json) -> Result<(), Error> {
         match row {
             Json::Object(ref mut obj) => {
-                obj.entry("_id".to_string()).or_insert_with(|| Json::from(id));
+                obj.entry("_id".to_string())
+                    .or_insert_with(|| Json::from(id));
             }
             _ => return Err(Error::ExpectedObj),
         };
@@ -136,6 +142,7 @@ impl<'a> OnDiskDb {
         Ok(())
     }
 
+    //TODO return Option<Json> instead
     pub fn delete(&mut self, key: &str) -> Result<(), Error> {
         if let Some(i) = self.meta.iter().position(|m| m.key == key) {
             let n = self.meta[i].id;
@@ -143,16 +150,42 @@ impl<'a> OnDiskDb {
             self.write_table_meta()?;
             self.delete_table(key, n)
         } else {
+            self.db.remove(key).map_err(bad_io)?;
             Ok(())
         }
     }
 
     fn delete_table(&mut self, key: &str, count: usize) -> Result<(), Error> {
-        self.meta_db.remove(len_key(key)).map_err(|_| Error::BadIO)?;
+        self.meta_db
+            .remove(len_key(key))
+            .map_err(|_| Error::BadIO)?;
         for i in 0..count {
-            self.meta_db.remove(row_key(key, i)).map_err(|_| Error::BadIO)?;
+            self.meta_db
+                .remove(row_key(key, i))
+                .map_err(|_| Error::BadIO)?;
         }
         Ok(())
+    }
+
+    fn read_table(&self, meta: &Meta) -> Result<Json, Error> {
+        let mut rows = Vec::new();
+        let n = meta.id;
+
+        for i in 0..n {
+            if let Some(val) = self.read_row(&meta.key, i)? {
+                rows.push(val);
+            }
+        }
+        Ok(Json::from(rows))
+    }
+
+    fn get(&self, key: &str) -> Result<Option<Json>, Error> {
+        get(&self.db, key)
+    }
+
+    fn read_row(&self, key: &str, id: usize) -> Result<Option<Json>, Error> {
+        let key = row_key(key, id);
+        get(&self.meta_db, &key)
     }
 }
 
@@ -175,25 +208,6 @@ pub mod tests {
     use serde_json::json;
     use std::fs::remove_dir_all;
 
-    fn read_table(db: &mut OnDiskDb, meta: &Meta) -> Result<Json, Error> {
-        let mut rows = Vec::new();
-        let n = meta.id;
-
-        for i in 0..n {
-            if let Some(val) = db.read_row(&meta.key, i)? {
-                rows.push(val);
-            }
-        }
-        Ok(Json::from(rows))
-    }
-
-    fn obj(val: Json) -> JsonObj {
-        match val {
-            Json::Object(obj) => obj,
-            _ => unimplemented!(),
-        }
-    }
-
     fn rows() -> Vec<Json> {
         vec![
             json!({"_id": 0, "name": "james", "age": 35}),
@@ -208,17 +222,16 @@ pub mod tests {
         let path = "insert_rows";
         match remove_dir_all(path) {
             Ok(_) => (),
-            Err(_)=> ()
+            Err(_) => (),
         };
         let key = "t";
         {
             let mut db = OnDiskDb::open(path).unwrap();
             let mut rows = rows();
-            let id = rows.len();
             db.insert_rows(key, &mut rows).unwrap();
         }
         {
-            let mut db = OnDiskDb::open(path).unwrap();
+            let db = OnDiskDb::open(path).unwrap();
             let rows = rows();
             let id = rows.len();
             let exp = Json::Array(rows);
@@ -257,7 +270,7 @@ pub mod tests {
         let mut db = OnDiskDb::open(path).unwrap();
         let val = json!({"name": "james"});
         assert_eq!(Ok(()), db.set("k1", &val));
-        assert_eq!(Ok(()), db.remove("k1"));
+        assert_eq!(Ok(()), db.delete("k1"));
         assert_eq!(Ok(None), db.get("k1"));
         remove_dir_all(path).unwrap();
     }

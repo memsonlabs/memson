@@ -195,6 +195,9 @@ pub fn json_append(val: &mut Json, elem: Json) {
                 json_append(val, elem);
             }
         },
+        Json::Null => {
+            *val = elem;
+        }
         val => {
             let arr = vec![val.clone(), elem];
             *val = Json::from(arr);
@@ -210,7 +213,7 @@ pub fn insert_rows(val: &mut Json, rows: Vec<Json>) -> Result<usize, Error> {
                 arr.push(row);
             }
             Ok(n)
-        },
+        }
         _ => Err(Error::BadInsert),
     }
 }
@@ -516,7 +519,7 @@ fn add_nums(x: &JsonNum, y: &JsonNum) -> JsonNum {
             let x = x.as_f64().unwrap();
             let y = y.as_f64().unwrap();
             JsonNum::from_f64(x + y).unwrap()
-        } 
+        }
     }
 }
 

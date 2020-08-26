@@ -114,11 +114,15 @@ fn eval(db: web::Data<MemsonServer>, cmd: Cmd) -> HttpResponse {
         }
         Cmd::Sum(key) => {
             let db = db.read().unwrap();
-            http_opt_resp(db.sum(&key))
+            http_resp(db.sum(&key))
         }
         Cmd::Query(cmd) => {
             let db = db.read().unwrap();
             http_resp(db.query(cmd))
+        }
+        Cmd::Len => {
+            let db = db.read().unwrap();
+            HttpResponse::Ok().json(db.len())
         }
     }
 }

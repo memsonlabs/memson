@@ -57,6 +57,8 @@ pub enum Cmd {
     Insert(String, Json),
     #[serde(rename = "keys")]
     Keys(Option<usize>),
+    #[serde(rename = "len")]
+    Len,
 }
 
 impl Cmd {

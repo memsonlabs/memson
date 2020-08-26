@@ -916,17 +916,9 @@ mod tests {
 
     use serde_json::json;
 
-    fn insert<K: Into<String>>(db: &mut InMemDb, key: K, val: Json) {
-        db.set(key, val);
-    }
-
-    fn insert_data(db: &mut InMemDb) {
-        insert(db, "t", all_data());
-    }
-
     fn test_db() -> InMemDb {
         let mut db = InMemDb::new();
-        insert_data(&mut db);
+        db.set("t", all_data());
         db
     }
 
