@@ -1,14 +1,14 @@
 use serde_json::value::Value;
-use std::fmt;
+use std::{fmt, io};
 
 pub enum ParseError {
     BadArgument(Value),
     BadCmd,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum Error {
-    BadIO,
+    BadIO(io::Error),
     BadType,
     BadInsert,
     EmptySequence,
@@ -22,6 +22,9 @@ pub enum Error {
     BadSelect,
     BadObject,
     NotAggregate,
+    Sled(sled::Error),
+
+    Serialize,
 }
 
 impl Error {
@@ -49,7 +52,7 @@ impl fmt::Display for Error {
     // This trait requires `fmt` with this exact signature.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let msg = match self {
-            Error::BadIO => "bad io",
+            Error::BadIO(_) => "bad io",
             Error::BadType => "incorrect type",
             Error::EmptySequence => "empty sequence",
             Error::BadNumber => "bad number",
@@ -63,6 +66,8 @@ impl fmt::Display for Error {
             Error::BadObject => "bad object",
             Error::BadFrom => "bad from",
             Error::BadSelect => "bad select",
+            Error::Sled(_) => "bad persistence",
+            Error::Serialize => "bad serialization",
         };
         write!(f, "{}", "error: ".to_string() + msg)
     }

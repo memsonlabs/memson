@@ -741,6 +741,31 @@ impl<'a> Query<'a> {
                     }
                     Ok(Some(ids))
                 }
+                Json::Array(arr) => {
+                    let mut ids = Vec::new();
+                    for val in arr {
+                        match val {
+                            Json::String(s) => ids.push(s.to_string()),
+                            Json::Object(obj) => {
+                                for (_, v) in obj {
+                                    match v {
+                                        Json::Object(obj) => {
+                                            for (_, v) in obj {
+                                                ids.push(json_to_string(v).ok_or(Error::BadSelect)?);
+                                            }
+                                        }
+                                        _ => unimplemented!(),
+                                    }
+                                }
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                    Ok(Some(ids))
+                }
+                Json::String(s) => {
+                    Ok(Some(vec![s.to_string()]))
+                }
                 _ => unimplemented!(),
             }
         } else {
@@ -825,9 +850,10 @@ impl<'a> Query<'a> {
                             _ => unimplemented!(),
                         }
                     }
+
                 }
-                _ => unimplemented!(),
-            }
+                _ => (),
+            };
             Ok(Some(a))
         } else {
             Ok(None)

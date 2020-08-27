@@ -17,11 +17,6 @@ impl InMemDb {
         self.cache.entry(key.into()).or_insert_with(|| Json::Null)
     }
 
-    pub fn append<K: Into<String>>(&mut self, key: K, val: Json) {
-        let entry = self.entry(key);
-        json_append(entry, val);
-    }
-
     pub fn set<K: Into<String>>(&mut self, key: K, val: Json) -> Option<Json> {
         self.cache.insert(key.into(), val)
     }

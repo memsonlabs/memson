@@ -5,6 +5,7 @@ use crate::json::*;
 use crate::ondiskdb::OnDiskDb;
 use crate::query::Query;
 use std::path::Path;
+use std::fs;
 
 #[derive(Debug)]
 struct Cache {
@@ -20,7 +21,8 @@ pub struct Memson {
 
 impl Memson {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        let db = OnDiskDb::open(&path)?;
+        fs::create_dir_all(&path).map_err(|err| Error::BadIO(err))?;
+        let db = OnDiskDb::open(path)?;
         let cache = db.populate()?;
         Ok(Self { cache, db })
     }

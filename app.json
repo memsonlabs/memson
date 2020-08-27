@@ -1,0 +1,7 @@
+{
+  "name": "memson",
+  "description": "a basic memson server using heroku",
+  "repository": "https://github.com/inmemlabs/memson",
+  "logo": "https://node-js-sample.herokuapp.com/node.png",
+  "keywords": ["memson", "rust", "db", "cache"]
+}

@@ -44,15 +44,15 @@ fn meta_path<P: AsRef<Path>>(path: P) -> PathBuf {
 fn open_sled<P: AsRef<Path>>(path: P) -> Result<Sled, Error> {
     sled::open(db_path(&path)).map_err(|e| {
         eprintln!("{:?}", e);
-        Error::BadIO
+        Error::Sled(e)
     })
 }
 
 fn get(db: &Sled, key: &str) -> Result<Option<Json>, Error> {
     if let Some(v) = db
         .get(key)
-        .map_err(|_| Error::BadIO)? {
-        serde_json::from_slice(v.as_ref()).map_err(|_| Error::BadIO).map(Some)
+        .map_err(|e| Error::Sled(e))? {
+        serde_json::from_slice(v.as_ref()).map_err(|_| Error::Serialize).map(Some)
     } else {
         Ok(None)
     }
@@ -69,15 +69,15 @@ impl<'a> OnDiskDb {
     pub fn set<S: Into<String>>(&mut self, key: S, val: &Json) -> Result<(), Error> {
         self.db
             .insert(key.into(), serde_json::to_vec(val).unwrap())
-            .map_err(|_| Error::BadIO)?;
-        self.db.flush().map_err(|_| Error::BadIO)?;
+            .map_err(|e| Error::Sled(e))?;
+        self.db.flush().map_err(|e| Error::Sled(e))?;
         Ok(())
     }
 
     pub fn populate(&self) -> Result<InMemDb, Error> {
         let mut db = InMemDb::new();
         for r in self.db.iter() {
-            let (k, v) = r.map_err(|_| Error::BadIO)?;
+            let (k, v) = r.map_err(|e| Error::Sled(e))?;
             let key = unsafe { String::from_utf8_unchecked(k.to_vec()) };
             let val: Json = serde_json::from_slice(&v).unwrap();
             db.set(key, val);
@@ -102,7 +102,7 @@ impl<'a> OnDiskDb {
             _ => return Err(Error::ExpectedObj),
         };
         let key = row_key(key, id);
-        let val = serde_json::to_vec(row).map_err(|_| Error::BadIO)?;
+        let val = serde_json::to_vec(row).map_err(|_| Error::Serialize)?;
         self.meta_db.insert(key, val).map_err(bad_io)?;
         self.meta_db.flush().map_err(bad_io)?;
         Ok(())
@@ -112,7 +112,7 @@ impl<'a> OnDiskDb {
         self.meta_db
             .insert(
                 "_meta",
-                bincode::serialize(&self.meta).map_err(|_| Error::BadIO)?,
+                bincode::serialize(&self.meta).map_err(|_| Error::Serialize)?,
             )
             .map_err(bad_io)?;
         Ok(())
@@ -158,11 +158,11 @@ impl<'a> OnDiskDb {
     fn delete_table(&mut self, key: &str, count: usize) -> Result<(), Error> {
         self.meta_db
             .remove(len_key(key))
-            .map_err(|_| Error::BadIO)?;
+            .map_err(|e| Error::Sled(e))?;
         for i in 0..count {
             self.meta_db
                 .remove(row_key(key, i))
-                .map_err(|_| Error::BadIO)?;
+                .map_err(|e| Error::Sled(e))?;
         }
         Ok(())
     }
@@ -179,10 +179,6 @@ impl<'a> OnDiskDb {
         Ok(Json::from(rows))
     }
 
-    fn get(&self, key: &str) -> Result<Option<Json>, Error> {
-        get(&self.db, key)
-    }
-
     fn read_row(&self, key: &str, id: usize) -> Result<Option<Json>, Error> {
         let key = row_key(key, id);
         get(&self.meta_db, &key)
@@ -191,14 +187,14 @@ impl<'a> OnDiskDb {
 
 fn read_meta(sled: &Sled) -> Result<Vec<Meta>, Error> {
     if let Some(v) = sled.get("_meta").map_err(bad_io)? {
-        bincode::deserialize(v.as_ref()).map_err(|_| Error::BadIO)
+        bincode::deserialize(v.as_ref()).map_err(|_| Error::Serialize)
     } else {
         Ok(Vec::new())
     }
 }
 
-fn bad_io(_: sled::Error) -> Error {
-    Error::BadIO
+fn bad_io(e: sled::Error) -> Error {
+    Error::Sled(e)
 }
 
 #[cfg(test)]
