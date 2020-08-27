@@ -1,4 +1,3 @@
 /target
-/db
-/query
 /memson
+**/*.rs.bk

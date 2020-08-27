@@ -1,7 +1,11 @@
 {
   "name": "memson",
-  "description": "a basic memson server using heroku",
-  "repository": "https://github.com/inmemlabs/memson",
-  "logo": "https://node-js-sample.herokuapp.com/node.png",
-  "keywords": ["memson", "rust", "db", "cache"]
+  "description": "A basic memson server",
+  "repository": "https://github.com/inmemlab/memson",
+  "success_url": "/",
+  "keywords": ["rust", "memson"],
+  "website": "https://github.com/inmemlab/memson",
+  "env": {
+    "BUILDPACK_URL": "https://github.com/emk/heroku-buildpack-rust.git"
+  }
 }
