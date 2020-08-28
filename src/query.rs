@@ -573,14 +573,14 @@ fn parse_selects_to_cmd(selects: &[Json]) -> Result<Vec<Cmd>, Error> {
 
 fn eval_aggregate(cmd: Cmd, rows: &[Json]) -> Result<Option<Json>, Error> {
     match cmd {
-        Cmd::Sum(key) => eval_agg(&key, rows, Sum::new()),
-        Cmd::Max(key) => eval_agg(&key, rows, Max::new()),
-        Cmd::Min(key) => eval_agg(&key, rows, Min::new()),
-        Cmd::Avg(key) => eval_agg(&key, rows, Avg::new()),
-        Cmd::First(key) => eval_agg(&key, rows, First::new()),
-        Cmd::Last(key) => eval_agg(&key, rows, Last::new()),
-        Cmd::Var(key) => eval_var(&key, rows),
-        Cmd::Dev(key) => eval_dev(&key, rows),
+        Cmd::Sum(arg) => eval_agg(arg, rows, Sum::new()),
+        Cmd::Max(arg) => eval_agg(arg, rows, Max::new()),
+        Cmd::Min(arg) => eval_agg(arg, rows, Min::new()),
+        Cmd::Avg(arg) => eval_agg(arg, rows, Avg::new()),
+        Cmd::First(arg) => eval_agg(arg, rows, First::new()),
+        Cmd::Last(arg) => eval_agg(arg, rows, Last::new()),
+        Cmd::Var(arg) => eval_var(arg, rows),
+        Cmd::StdDev(arg) => eval_dev(arg, rows),
         _ => Err(Error::NotAggregate),
     }
 }
@@ -620,10 +620,14 @@ fn eval_row(out: &mut Option<JsonObj>, cmd: &(String, Cmd), row: &Json) -> Resul
     }
 }
 
-fn eval_var(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
+fn eval_var(arg: Box<Cmd>, rows: &[Json]) -> Result<Option<Json>, Error> {
+    let key = match *arg {
+        Cmd::Get(key) => key,
+        _ => unimplemented!(), 
+    };
     let mut avg = Avg::new();
     for row in rows {
-        if let Some(val) = row.get(key) {
+        if let Some(val) = row.get(&key) {
             avg.aggregate(val)?;
         }
     }
@@ -632,27 +636,31 @@ fn eval_var(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
     }
     let mut var = Var::from(avg.avg(), avg.count);
     for row in rows {
-        if let Some(val) = row.get(key) {
+        if let Some(val) = row.get(&key) {
             var.aggregate(val)?;
         }
     }
     Ok(var.apply())
 }
 
-fn eval_dev(key: &str, rows: &[Json]) -> Result<Option<Json>, Error> {
-    let r = match eval_var(key, rows)? {
+fn eval_dev(arg: Box<Cmd>, rows: &[Json]) -> Result<Option<Json>, Error> {
+    let r = match eval_var(arg, rows)? {
         Some(val) => val.as_f64().map(|x| Json::from(x.sqrt())),
         None => None,
     };
     Ok(r)
 }
 
-fn eval_agg<'a, A: 'a>(key: &str, rows: &'a [Json], mut agg: A) -> Result<Option<Json>, Error>
+fn eval_agg<'a, A: 'a>(arg: Box<Cmd>, rows: &'a [Json], mut agg: A) -> Result<Option<Json>, Error>
 where
     A: Aggregate<'a>,
 {
+    let key = match *arg {
+        Cmd::Get(key) => key,
+        _ => unimplemented!(),
+    };
     for row in rows {
-        if let Some(val) = row.get(key) {
+        if let Some(val) = row.get(&key) {
             agg.aggregate(val)?;
         }
     }
@@ -942,6 +950,7 @@ mod tests {
 
     use serde_json::json;
 
+
     fn test_db() -> InMemDb {
         let mut db = InMemDb::new();
         db.set("t", all_data());
@@ -1066,7 +1075,7 @@ mod tests {
     #[test]
     fn select_sum_ok() {
         let qry = query(json!({
-            "select": {"totalAge": {"sum": "age"}},
+            "select": {"totalAge": {"sum": {"get": "age"}}},
             "from": "t"
         }));
         let val = json!({"totalAge": 93});
@@ -1077,7 +1086,7 @@ mod tests {
     fn select_max_num_ok() {
         let qry = query(json!({
             "select": {
-                "maxAge": {"max": "age"}
+                "maxAge": {"max": {"get": "age"}}
             },
             "from": "t"
         }));
@@ -1089,7 +1098,7 @@ mod tests {
     fn select_max_str_ok() {
         let qry = query(json!({
             "select": {
-                "maxName": {"max": "name"}
+                "maxName": {"max":  {"get": "name"}}
             },
             "from": "t"
         }));
@@ -1101,7 +1110,7 @@ mod tests {
     fn select_min_num_ok() {
         let qry = query(json!({
             "select": {
-                "minAge": {"min": "age"}
+                "minAge": {"min": {"get": "age"}}
             },
             "from": "t"
         }));
@@ -1113,7 +1122,7 @@ mod tests {
     fn select_avg_num_ok() {
         let qry = query(json!({
             "select": {
-                "avgAge": {"avg": "age"}
+                "avgAge": {"avg": {"get": "age"}}
             },
             "from": "t"
         }));
@@ -1124,7 +1133,7 @@ mod tests {
     fn select_first_ok() {
         let qry = query(json!({
             "select": {
-                "firstAge": {"first": "age"}
+                "firstAge": {"first": {"get": "age"}}
             },
             "from": "t"
         }));
@@ -1135,7 +1144,7 @@ mod tests {
     fn select_last_ok() {
         let qry = query(json!({
             "select": {
-                "lastAge": {"last": "age"}
+                "lastAge": {"last": {"get": "age"}}
             },
             "from": "t"
         }));
@@ -1146,7 +1155,7 @@ mod tests {
     fn select_var_num_ok() {
         let qry = query(json!({
             "select": {
-                "varAge": {"var": "age"}
+                "varAge": {"var": {"get": "age"}}
             },
             "from": "t"
         }));
@@ -1157,7 +1166,7 @@ mod tests {
     fn select_dev_num_ok() {
         let qry = query(json!({
             "select": {
-                "devAge": {"dev": "age"}
+                "devAge": {"dev": {"get": "age"}}
             },
             "from": "t"
         }));
@@ -1168,7 +1177,7 @@ mod tests {
     fn select_max_age_where_age_gt_20() {
         let qry = query(json!({
             "select": {
-                "maxAge": {"max": "age"}
+                "maxAge": {"max": {"get": "age"}}
             },
             "from": "t",
             "where": {">": ["age", 20]}
@@ -1192,7 +1201,7 @@ mod tests {
     fn select_min_age_where_age_gt_20() {
         let qry = query(json!({
             "select": {
-                "minAge": {"min": "age"}
+                "minAge": {"min":  {"get": "age"}}
             },
             "from": "t",
             "where": {">": ["age", 20]}
@@ -1204,8 +1213,8 @@ mod tests {
     fn select_min_max_age_where_age_gt_20() {
         let qry = query(json!({
             "select": {
-                "youngestAge": {"min": "age"},
-                "oldestAge": {"max": "age"}
+                "youngestAge": {"min": {"get": "age"}},
+                "oldestAge": {"max": {"get": "age"}},
             },
             "from": "t",
             "where": {">": ["age", 20]}

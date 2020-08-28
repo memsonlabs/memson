@@ -16,39 +16,39 @@ pub struct QueryCmd {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Cmd {
     #[serde(rename = "append")]
-    Append(String, Json),
+    Append(String, Box<Cmd>),
     #[serde(rename = "get")]
     Get(String),
     #[serde(rename = "set")]
-    Set(String, Json),
+    Set(String, Box<Cmd>),
     #[serde(rename = "len")]
-    Count(String),
+    Count(Box<Cmd>),
     #[serde(rename = "max")]
-    Max(String),
+    Max(Box<Cmd>),
     #[serde(rename = "min")]
-    Min(String),
+    Min(Box<Cmd>),
     #[serde(rename = "avg")]
-    Avg(String),
+    Avg(Box<Cmd>),
     #[serde(rename = "delete")]
     Delete(String),
     #[serde(rename = "dev")]
-    Dev(String),
+    StdDev(Box<Cmd>),
     #[serde(rename = "sum")]
-    Sum(String),
+    Sum(Box<Cmd>),
     #[serde(rename = "add")]
-    Add(String, String),
+    Add(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "sub")]
-    Sub(String, String),
+    Sub(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "mul")]
-    Mul(String, String),
+    Mul(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "div")]
-    Div(String, String),
+    Div(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "first")]
-    First(String),
+    First(Box<Cmd>),
     #[serde(rename = "last")]
-    Last(String),
+    Last(Box<Cmd>),
     #[serde(rename = "var")]
-    Var(String),
+    Var(Box<Cmd>),
     #[serde(rename = "pop")]
     Pop(String),
     #[serde(rename = "query")]
@@ -59,53 +59,13 @@ pub enum Cmd {
     Keys(Option<usize>),
     #[serde(rename = "len")]
     Len,
+    #[serde(rename = "unique")]
+    Unique(Box<Cmd>), 
+    #[serde(rename = "json")]
+    Json(Json),
 }
 
-impl Cmd {
-    pub fn sum(key: String) -> Cmd {
-        Cmd::Sum(key)
-    }
-
-    pub fn get(key: String) -> Cmd {
-        Cmd::Get(key)
-    }
-
-    pub fn count(key: String) -> Cmd {
-        Cmd::Count(key)
-    }
-
-    pub fn max(key: String) -> Cmd {
-        Cmd::Max(key)
-    }
-
-    pub fn min(key: String) -> Cmd {
-        Cmd::Min(key)
-    }
-
-    pub fn avg(key: String) -> Cmd {
-        Cmd::Avg(key)
-    }
-
-    pub fn dev(key: String) -> Cmd {
-        Cmd::Dev(key)
-    }
-
-    pub fn first(key: String) -> Cmd {
-        Cmd::First(key)
-    }
-
-    pub fn last(key: String) -> Cmd {
-        Cmd::Last(key)
-    }
-
-    pub fn var(key: String) -> Cmd {
-        Cmd::Var(key)
-    }
-
-    pub fn pop(key: String) -> Cmd {
-        Cmd::Pop(key)
-    }
-
+impl Cmd {    
     pub fn parse_cmd(json: Json) -> Result<Cmd, ParseError> {
         serde_json::from_value(json).map_err(|_| ParseError::BadCmd)
     }
@@ -133,24 +93,39 @@ impl Cmd {
 
     pub fn parse_obj(key: String, arg: Json) -> Result<Cmd, ParseError> {
         match key.as_ref() {
-            "sum" => Self::parse_arg(arg, &Cmd::sum),
-            "first" => Self::parse_arg(arg, &Cmd::first),
-            "last" => Self::parse_arg(arg, &Cmd::last),
-            "pop" => Self::parse_arg(arg, &Cmd::pop),
-            "var" => Self::parse_arg(arg, &Cmd::var),
-            "dev" => Self::parse_arg(arg, &Cmd::dev),
-            "avg" => Self::parse_arg(arg, &Cmd::avg),
-            "max" => Self::parse_arg(arg, &Cmd::max),
-            "min" => Self::parse_arg(arg, &Cmd::min),
-            "len" => Self::parse_arg(arg, &Cmd::count),
-            "get" => Self::parse_arg(arg, &Cmd::get),
+            "sum" => Self::parse_arg(arg, &Cmd::Sum),
+            "first" => Self::parse_arg(arg, &Cmd::First),
+            "last" => Self::parse_arg(arg, &Cmd::Last),
+            "pop" => Self::parse_arg_str(arg, &Cmd::Pop),
+            "var" => Self::parse_arg(arg, &Cmd::Var),
+            "dev" => Self::parse_arg(arg, &Cmd::StdDev),
+            "avg" => Self::parse_arg(arg, &Cmd::Avg),
+            "max" => Self::parse_arg(arg, &Cmd::Max),
+            "min" => Self::parse_arg(arg, &Cmd::Min),
+            "len" => Self::parse_arg(arg, &Cmd::Count),
+            "get" => Self::parse_arg_str(arg, &Cmd::Get),
             _ => unimplemented!(),
         }
     }
 
-    fn parse_arg(arg: Json, f: &dyn Fn(String) -> Cmd) -> Result<Cmd, ParseError> {
+    fn parse_arg_str(arg: Json, f: &dyn Fn(String) -> Cmd) -> Result<Cmd, ParseError> {
         match arg {
             Json::String(key) => Ok(f(key)),
+            val => Err(ParseError::BadArgument(val)),
+        }
+    }
+
+    fn parse_arg(arg: Json, f: &dyn Fn(Box<Cmd>) -> Cmd) -> Result<Cmd, ParseError> {
+        match arg {
+            Json::Object(obj) => {
+                for (_, val) in &obj {
+                    match val {
+                        Json::String(s) => return Ok(f(Box::new(Cmd::Get(s.to_string())))),
+                        val => return Err(ParseError::BadArgument(val.clone())),
+                    }
+                }
+                Err(ParseError::BadArgument(Json::from(obj)))
+            },
             val => Err(ParseError::BadArgument(val)),
         }
     }
@@ -162,7 +137,7 @@ impl Cmd {
             | Cmd::Max(_)
             | Cmd::First(_)
             | Cmd::Min(_)
-            | Cmd::Dev(_)
+            | Cmd::StdDev(_)
             | Cmd::Last(_)
             | Cmd::Sum(_)
             | Cmd::Var(_) => true,

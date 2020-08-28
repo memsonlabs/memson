@@ -256,7 +256,7 @@ pub mod tests {
         let mut db = OnDiskDb::open(path).unwrap();
         let val = json!({"name": "james"});
         assert_eq!(Ok(()), db.set("k1", &val));
-        assert_eq!(Ok(Some(val)), db.get("k1"));
+        assert_eq!(Ok(Some(val)), get(&db.db, "k1"));
         remove_dir_all(path).unwrap();
     }
 
@@ -267,7 +267,7 @@ pub mod tests {
         let val = json!({"name": "james"});
         assert_eq!(Ok(()), db.set("k1", &val));
         assert_eq!(Ok(()), db.delete("k1"));
-        assert_eq!(Ok(None), db.get("k1"));
+        assert_eq!(Ok(None), get(&db.db, "k1"));
         remove_dir_all(path).unwrap();
     }
 }

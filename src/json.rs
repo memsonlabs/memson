@@ -319,6 +319,24 @@ pub fn json_mul(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
+pub fn json_unique(val: &Json) -> Json {
+    match val {
+        Json::Array(arr) => arr_unique(arr),
+        val => val.clone(),
+    }
+}
+
+fn arr_unique(arr: &[Json]) -> Json {
+    let mut unique: Vec<Json> = Vec::new();
+    for val in arr {
+        let pos = unique.iter().find(|x| *x == val);
+        if pos.is_none() {
+            unique.push(val.clone());
+        }
+    }
+    Json::Array(unique)
+}
+
 fn mul_vals(x: &Json, y: &Json) -> Result<Json, Error> {
     match (x, y) {
         (Json::Number(x), Json::Number(y)) => mul_nums(x, y),
@@ -967,4 +985,11 @@ fn json_str_to_string() {
     let val = json!("abc");
 
     assert_eq!(json_to_string(&val), Some(String::from("abc")));
+}
+
+#[test]
+fn json_append_obj() {
+    let mut obj = json!({"name":"anna", "age": 28});
+    json_append(&mut obj, json!({"email": "anna@gmail.com"}));
+    assert_eq!(obj, json!({"name": "anna", "age": 28, "email": "anna@gmail.com"}))
 }
