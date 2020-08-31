@@ -1,12 +1,21 @@
 use crate::err::Error;
 use serde_json::Number as JsonNum;
 use serde_json::Number;
-pub use serde_json::{json, Map, Value as Json};
+pub use serde_json::{json, Map};
 
 use std::cmp::PartialOrd;
 use std::mem;
 
+pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
+
+pub fn count(val: &Json) -> Result<Json, Error> {
+    Ok(json_count(val))
+}
+
+pub fn unique(val: &Json) -> Result<Json, Error> {
+    Ok(json_unique(val))
+}
 
 pub fn json_string(val: &Json) -> Option<&str> {
     match val {
@@ -747,7 +756,7 @@ fn parse_sum(val: Json) -> Res<Cmd> {
 
 fn parse_get(val: Json) -> Res<Cmd> {
     match val {
-        Json::String(key) => Ok(Cmd::Get(key)),
+        Json::String(key) => Ok(Cmd::Key(key)),
         _ => Err(Error::BadType),
     }
 }
@@ -836,7 +845,7 @@ fn parse_div(val: Json) -> Res<Cmd> {
 /*
 pub fn eval_json_cmd(cmd: Cmd, db: &mut Database) -> Res {
     match cmd {
-        Cmd::Get(ref key) => db.get(key).map(|x| x.clone()).ok_or(BAD_KEY),
+        Cmd::Key(ref key) => db.get(key).map(|x| x.clone()).ok_or(BAD_KEY),
         Cmd::Del(ref key) => match db.del(key) {
             Ok(Some(val)) => Ok(val),
             Ok(None) => Ok(Json::Null),
@@ -948,6 +957,31 @@ fn eval_min(arg: Cmd, db: &mut Database) -> Res {
 }
 
 */
+
+pub fn json_get(key: &str, val: &Json) -> Option<Json> {
+    match val {
+        Json::Array(arr) => {
+            if arr.is_empty() {
+                return None;
+            }
+            let mut out = Vec::new();
+            for val in arr {
+                if let Some(v) = json_get(key, val) {
+                    out.push(v);
+                }
+            }
+            if out.is_empty() {
+                None
+            } else {
+                Some(Json::Array(out))
+            }
+        },
+        Json::Object(obj) => {
+            obj.get(key).map(|x| x.clone())
+        }
+        val => None
+    }
+}
 
 pub fn json_push(to: &mut Json, val: Json) {
     match to {

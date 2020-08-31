@@ -75,6 +75,8 @@ impl<'a> OnDiskDb {
     }
 
     pub fn populate(&self) -> Result<InMemDb, Error> {
+        unimplemented!()
+        /*
         let mut db = InMemDb::new();
         for r in self.db.iter() {
             let (k, v) = r.map_err(|e| Error::Sled(e))?;
@@ -87,6 +89,7 @@ impl<'a> OnDiskDb {
             db.set(&meta.key, val);
         }
         Ok(db)
+        */
     }
 
     pub(crate) fn insert(&mut self, key: &str, val: &mut [Json]) -> Result<(), Error> {

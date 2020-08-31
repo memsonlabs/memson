@@ -3,7 +3,6 @@ use crate::err::Error;
 use crate::inmemdb::InMemDb;
 use crate::json::*;
 use crate::ondiskdb::OnDiskDb;
-use crate::query::Query;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -29,6 +28,10 @@ pub struct Summary<'a> {
     size: usize,
 }
 
+pub trait Db {
+    fn eval(&mut self, cmd: Cmd) -> Result<Json, Error>;
+} 
+
 #[derive(Debug)]
 pub struct Memson {
     cache: InMemDb,
@@ -52,8 +55,7 @@ impl Memson {
     }
 
     pub(crate) fn query(&self, cmd: QueryCmd) -> Result<Json, Error> {
-        let qry = Query::from(&self.cache, cmd);
-        qry.exec()
+        unimplemented!()
     }
 
     pub fn len(&self) -> usize {
@@ -63,7 +65,7 @@ impl Memson {
     pub fn summary(&self) -> Summary {
         let no_entries = self.cache.len();
         let size = self.cache.size();
-        let keys = self.cache.keys();
+        let keys = vec![];
         Summary {
             no_entries,
             size,
@@ -71,8 +73,18 @@ impl Memson {
         }
     }
 
-    pub fn get(&self, key: &str) -> Result<&Json, Error> {
-        self.cache.get(key)
+    pub fn get(&self, key: &str) -> Result<Json, Error> {
+        let keys: Vec<&str> = key.split('.').collect();
+        let mut val = self.cache.get(keys[0])?;
+        for key in keys.iter().skip(1) {
+            if let Some(v) = json_get(key, &val) {
+                val = v;
+            }
+            else {
+                return Ok(Json::Null);
+            }
+        }
+        Ok(val)
     }
 
     pub fn set<K: Into<String>>(&mut self, key: K, val: Json) -> Result<Option<Json>, Error> {
@@ -100,7 +112,7 @@ impl Memson {
             Cmd::Delete(key) => opt_val(self.delete(&key)),
             Cmd::Div(lhs, rhs) => self.eval_bin_fn(lhs, rhs, &json_div),
             Cmd::First(arg) => self.eval_unr_fn_ref(arg, &json_first),
-            Cmd::Get(key) => self.get(&key).map(|x| x.clone()),
+            Cmd::Key(key) | Cmd::Key(key) => self.get(&key).map(|x| x.clone()),
             Cmd::Insert(key, arg) => self.insert(key, arg).map(Json::from),
             Cmd::Json(val) => Ok(val),
             Cmd::Keys(_page) => Ok(self.keys()),
@@ -118,6 +130,7 @@ impl Memson {
             Cmd::StdDev(arg) => self.eval_unr_fn(arg, &json_dev),
             Cmd::Sub(lhs, rhs) => self.eval_bin_fn(lhs, rhs, &json_sub),
             Cmd::Sum(arg) => self.eval_unr_fn(arg, &json_sum),
+            Cmd::Summary => unimplemented!(),
             Cmd::Unique(arg) => self.eval_unr_fn(arg, &unique),
             Cmd::Var(arg) => self.eval_unr_fn(arg, &json_var),
         }
@@ -161,6 +174,7 @@ impl Memson {
     }  
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,7 +185,7 @@ mod tests {
     use std::fs;
 
     fn get<K:Into<String>>(key: K) -> Box<Cmd> {
-        Box::new(Cmd::Get(key.into()))
+        Box::new(Cmd::Key(key.into()))
     }
 
     fn avg<K:Into<String>>(key: K) -> Cmd {
@@ -529,10 +543,20 @@ mod tests {
             assert_eq!(Ok(None), db.set("k", val.clone()));
         }
         {
-            let db = Memson::open(path).unwrap();
-            let exp = Ok(&val);
-            assert_eq!(exp, db.get("k"));
+            let mut db = Memson::open(path).unwrap();
+            let exp = Ok(val);
+            assert_eq!(exp, db.eval(*get("k")));
         }
-        fs::remove_dir_all(path).unwrap();
+        let _ = fs::remove_dir_all(path);
     }
+
+    #[test]
+    fn nested_get() {
+        let path = "nested_get";
+        let mut db = test_db(path);
+        let act = db.eval(*get("t.name")).unwrap();
+        assert_eq!(json!(["james", "ania", "misha"]), act);
+        let _ = fs::remove_dir_all(path);
+    }    
 }
+*/

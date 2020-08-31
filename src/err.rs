@@ -11,6 +11,7 @@ pub enum Error {
     BadIO(io::Error),
     BadType,
     BadInsert,
+    BadCmd,
     BadKey,
     EmptySequence,
     BadNumber,
@@ -51,6 +52,7 @@ impl fmt::Display for Error {
     // This trait requires `fmt` with this exact signature.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let msg = match self {
+            Error::BadCmd => "bad command",
             Error::BadIO(_) => "bad io",
             Error::BadType => "incorrect type",
             Error::BadKey => "bad key",
