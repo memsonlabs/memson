@@ -1,34 +1,33 @@
-use crate::json::json_num_lt;
-use crate::json::json_num_gt;
 use crate::err::Error;
-use crate::json::{json_add, Json,JsonObj};
+use crate::json::json_num_gt;
+use crate::json::{json_add, Json, JsonNum, JsonObj};
+use crate::json::{json_add_nums, json_num_lt};
+use crate::query::Select;
 
 pub trait Aggregate {
-    fn push(&mut self, val: &JsonObj) -> Result<(), Error>;
+    fn push(&mut self, row: &JsonObj) -> Result<(), Error>;
     fn aggregate(&self) -> Json;
     fn name(&self) -> &str;
 }
 
 #[derive(Debug, Default)]
 pub struct Sum {
-    name: String,
-    key: String,
+    meta: Select,
     total: Option<Json>,
 }
 
 impl Sum {
-    pub fn new<K:Into<String>>(name: K, key: K) -> Self {
-        Self { name: name.into(), key: key.into(), total: None }
+    pub fn new<K: Into<String>>(name: K, key: K) -> Self {
+        Self {
+            meta: Select::from(name, key),
+            total: None,
+        }
     }
 }
 
-pub fn get<'a>(key: &str, row: &'a JsonObj) -> Option<&'a Json> {
-    unimplemented!()
-}
-
 impl Aggregate for Sum {
-    fn push(&mut self, val: &JsonObj) -> Result<(), Error> { 
-        let val = if let Some(v) = val.get(&self.key) {
+    fn push(&mut self, row: &JsonObj) -> Result<(), Error> {
+        let val = if let Some(v) = row.get(&self.meta.key) {
             v
         } else {
             return Err(Error::BadSelect);
@@ -41,7 +40,7 @@ impl Aggregate for Sum {
         Ok(())
     }
 
-    fn aggregate(&self) -> Json { 
+    fn aggregate(&self) -> Json {
         match &self.total {
             Some(val) => val.clone(),
             None => Json::Null,
@@ -49,34 +48,28 @@ impl Aggregate for Sum {
     }
 
     fn name(&self) -> &str {
-        &self.name
+        &self.meta.name
     }
 }
 
 #[derive(Debug, Default)]
 pub struct Max {
-    name: String,
-    key: String,    
+    key: Select,
     max: Option<Json>,
 }
 
 impl Max {
     pub fn new(name: String, key: String) -> Self {
         Self {
-            name,
-            key,
+            key: Select::from(name, key),
             max: None,
         }
-    }
-
-    fn update(&mut self, val: Json) {
-        self.max = Some(val);
     }
 }
 
 impl Aggregate for Max {
     fn push(&mut self, row: &JsonObj) -> Result<(), Error> {
-        let val = row.get(&self.key).ok_or(Error::BadSelect)?;
+        let val = row.get(&self.key.key).ok_or(Error::BadSelect)?;
         let max = match self.max {
             Some(ref max) => match (max, val) {
                 (Json::String(x), Json::String(y)) => {
@@ -88,8 +81,7 @@ impl Aggregate for Max {
                 }
                 (Json::String(_), _) => return Err(Error::BadType),
                 (Json::Number(x), Json::Number(y)) => {
-                    let r = json_num_gt(y, x).ok_or(Error::BadType)?;
-                    if r {
+                    if json_num_gt(y, x) {
                         val
                     } else {
                         max
@@ -106,7 +98,7 @@ impl Aggregate for Max {
             },
             None => val,
         };
-        self.update(max.clone());
+        self.max = Some(max.clone());
         Ok(())
     }
 
@@ -119,20 +111,19 @@ impl Aggregate for Max {
     }
 
     fn name(&self) -> &str {
-        self.name.as_ref()
+        self.key.name.as_ref()
     }
 }
 
-
 #[derive(Debug)]
 pub struct Min {
-    key: String, 
+    key: String,
     name: String,
     min: Option<Json>,
 }
 
 impl Min {
-    pub fn new<K:Into<String>>(name: K, key: K) -> Self {
+    pub fn new<K: Into<String>>(name: K, key: K) -> Self {
         Self {
             key: key.into(),
             name: name.into(),
@@ -183,31 +174,140 @@ impl Aggregate for Min {
     }
 }
 
-pub trait KeyedAggregate {
-    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error>;
+#[derive(Debug)]
+pub struct Avg {
+    key: String,
+    name: String,
+    count: usize,
+    total: JsonNum,
 }
 
-pub struct KeyedGet {
-    keys: Vec<String>,
-}
-
-impl KeyedGet {
-    pub fn from(keys: Vec<String>) -> KeyedGet {
-        KeyedGet { keys }
+impl Avg {
+    pub fn new<K: Into<String>, N: Into<String>>(name: N, key: K) -> Self {
+        Self {
+            key: key.into(),
+            name: name.into(),
+            total: JsonNum::from(0),
+            count: 0,
+        }
     }
 }
 
-impl KeyedAggregate for KeyedGet {
-    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
-        for key in self.keys.iter() {
-            if let Some(val) = input.get(key) {
-                let entry = output.entry(key.to_string()).or_insert_with(|| Json::Array(Vec::new()));
-                match entry {
-                    Json::Array(ref mut arr) => arr.push(val.clone()),
-                    _ => unimplemented!(),
-                }
+impl Aggregate for Avg {
+    fn push(&mut self, row: &JsonObj) -> Result<(), Error> {
+        if let Some(val) = row.get(&self.key) {
+            self.count += 1;
+            let num = match val {
+                Json::Number(num) => num,
+                _ => return Ok(()),
+            };
+            self.total = json_add_nums(&self.total, num);
+        }
+        Ok(())
+    }
+
+    fn aggregate(&self) -> Json {
+        Json::from(self.total.as_f64().unwrap() / (self.count as f64))
+    }
+
+    fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Last {
+    meta: Select,
+    val: Option<Json>,
+}
+
+impl Last {
+    pub fn new<S: Into<String>>(name: S, key: S) -> Self {
+        Self {
+            meta: Select::from(name, key),
+            val: None,
+        }
+    }
+}
+
+impl Aggregate for Last {
+    fn push(&mut self, row: &JsonObj) -> Result<(), Error> {
+        if let Some(val) = row.get(&self.meta.key) {
+            self.val = Some(val.clone());
+        }
+        Ok(())
+    }
+
+    fn aggregate(&self) -> Json {
+        self.val.clone().unwrap_or(Json::Null)
+    }
+
+    fn name(&self) -> &str {
+        self.meta.name.as_str()
+    }
+}
+
+pub struct Count {
+    meta: Select,
+    count: usize,
+}
+
+impl Count {
+    pub fn new<S: Into<String>>(name: S, key: S) -> Self {
+        Count {
+            meta: Select::from(name, key),
+            count: 0,
+        }
+    }
+}
+
+impl Aggregate for Count {
+    fn push(&mut self, row: &JsonObj) -> Result<(), Error> {
+        if let Some(_) = row.get(self.meta.key.as_str()) {
+            self.count += 1;
+        }
+        Ok(())
+    }
+
+    fn aggregate(&self) -> Json {
+        Json::from(self.count)
+    }
+
+    fn name(&self) -> &str {
+        self.meta.name.as_str()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct First {
+    meta: Select,
+    val: Option<Json>,
+}
+
+impl First {
+    pub fn new<S: Into<String>>(name: S, key: S) -> Self {
+        Self {
+            meta: Select::from(name, key),
+            val: None,
+        }
+    }
+}
+
+impl Aggregate for First {
+    fn push(&mut self, row: &JsonObj) -> Result<(), Error> {
+        if self.val.is_none() {
+            if let Some(val) = row.get(&self.meta.key) {
+                self.val = Some(val.clone());
             }
         }
         Ok(())
+    }
+
+    fn aggregate(&self) -> Json {
+        self.val.clone().unwrap_or(Json::Null)
+    }
+
+    fn name(&self) -> &str {
+        self.meta.name.as_str()
     }
 }

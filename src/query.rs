@@ -1,298 +1,111 @@
 use crate::aggregate::*;
-use crate::cmd::{Cmd};
+use crate::cmd::Cmd;
 use crate::err::Error;
 
 use crate::json::*;
+use std::collections::HashMap;
 
-use serde_json::{Value as Json};
+#[derive(Debug, Default)]
+pub struct Select {
+    pub name: String,
+    pub key: String,
+}
 
-pub fn parse_aggregator(cmd: &(String, Cmd)) -> Result<Box<dyn Aggregate>, Error> {
-    let name = cmd.0.to_string();
-    match cmd.1.clone() {
-        Cmd::Sum(arg) => {
-            match *arg {
-                
-                Cmd::Key(key) => {
-                    println!("returning sum agg");
-                    Ok(Box::new(Sum::new(name, key.to_string())))
-                }
-                _ => unimplemented!(),
-            }
+impl Select {
+    pub fn from<S: Into<String>>(name: S, key: S) -> Self {
+        Self {
+            name: name.into(),
+            key: key.into(),
         }
-        Cmd::Max(arg) => {
-            match *arg {
-                Cmd::Key(key) => {
-                    println!("returning max agg");
-                    Ok(Box::new(Max::new(name, key.to_string())))
-                }
-                _ => unimplemented!(),
-            }
-        }
-        Cmd::Min(arg) => {
-            match *arg {
-                Cmd::Key(key) => {
-                    println!("returning min agg");
-                    Ok(Box::new(Min::new(name, key.to_string())))
-                }
-                _ => unimplemented!(),
-            }
+    }
+}
+
+pub fn parse_aggregator(select: (&String, &Cmd)) -> Result<Box<dyn Aggregate>, Error> {
+    let name = select.0.to_string();
+    match select.1.clone() {
+        Cmd::Sum(arg) => parse_arg(name, arg, |x, y| Box::new(Sum::new(x, y))),
+        Cmd::Max(arg) => parse_arg(name, arg, |x, y| Box::new(Max::new(x, y))),
+        Cmd::Min(arg) => parse_arg(name, arg, |x, y| Box::new(Min::new(x, y))),
+        Cmd::Avg(arg) => parse_arg(name, arg, |x, y| Box::new(Avg::new(x, y))),
+        Cmd::Last(arg) => parse_arg(name, arg, |x, y| Box::new(Last::new(x, y))),
+        Cmd::First(arg) => parse_arg(name, arg, |x, y| Box::new(First::new(x, y))),
+        Cmd::Count(arg) => parse_arg(name, arg, |x, y| Box::new(Count::new(x, y))),
+        _ => unimplemented!(),
+    }
+}
+
+fn parse_arg<F>(name: String, arg: Box<Cmd>, f: F) -> Result<Box<dyn Aggregate>, Error>
+where
+    F: FnOnce(String, String) -> Box<dyn Aggregate>,
+{
+    match *arg {
+        Cmd::Key(key) => {
+            println!("returning max agg");
+            Ok(f(name, key.to_string()))
         }
         _ => unimplemented!(),
     }
 }
 
-pub fn parse_aggregators(cmds: &[(String,Cmd)]) -> Result<Vec<Box<dyn Aggregate>>, Error> {
+pub fn parse_aggregators(selects: &HashMap<String, Cmd>) -> Result<Vec<Box<dyn Aggregate>>, Error> {
     let mut aggs = Vec::new();
-    for cmd in cmds.iter() {
-        let cmd = parse_aggregator(cmd)?;
+    for select in selects.iter() {
+        let cmd = parse_aggregator(select)?;
         aggs.push(cmd);
     }
     Ok(aggs)
 }
 
-#[derive(Debug, Default)]
-struct KeyedMax {
-    col_name: String,
-    key: String,
-}
-
-impl KeyedMax {
-    fn new<S: Into<String>>(col_name: S, key: String) -> Self {
-        KeyedMax {
-            col_name: col_name.into(),
-            key,
-        }
-    }
-}
-
-fn key_obj_max(key: &str, val: &Json) -> Result<Option<Json>, Error> {
-    match val {
-        Json::Array(arr) => {
-            if arr.is_empty() {
-                return Ok(None);
-            }
-            let mut max = None;
-            for val in arr {
-                match val {
-                    Json::Object(obj) => {
-                        max = if let Some(val) = obj.get(key) {
-                            if let Some(max) = max {
-                                let is_max = json_gt(val, max).map_err(|_| Error::BadType)?;
-                                if is_max {
-                                    Some(val)
+fn eval_keyed_cmd(data: &JsonObj, cmd: &Cmd, out: &mut JsonObj) -> Result<(), Error> {
+    match cmd {
+        Cmd::Max(arg) => match &**arg {
+            Cmd::Key(ref key) => {
+                for (by_key, val) in data.iter() {
+                    match val {
+                        Json::Object(obj) => {
+                            if let Some(y) = obj.get(key) {
+                                let mut max_val: Option<Json> = None;
+                                let v = if let Some(x) = max_val {
+                                    if json_gt(&x, y) {
+                                        x
+                                    } else {
+                                        y.clone()
+                                    }
                                 } else {
-                                    Some(max)
+                                    y.clone()
+                                };
+                                max_val = Some(v);
+                                let entry =
+                                    out.entry(by_key.to_string()).or_insert_with(|| json!({}));
+                                match entry {
+                                    Json::Object(obj) => {
+                                        obj.insert(
+                                            key.to_string(),
+                                            if let Some(val) = max_val {
+                                                val
+                                            } else {
+                                                Json::Null
+                                            },
+                                        );
+                                    }
+                                    _ => todo!(),
                                 }
-                            } else {
-                                Some(val)
                             }
-                        } else {
-                            max
-                        };
+                        }
+                        _ => continue,
                     }
-                    _ => return Err(Error::BadObject),
                 }
+                Ok(())
             }
-            Ok(max.cloned())
-        }
-        val => Ok(Some(val.clone())),
+            arg => unimplemented!(),
+        },
+        Cmd::Min(arg) => match **arg {
+            Cmd::Key(_) => unimplemented!(),
+            _ => unimplemented!(),
+        },
+        _ => todo!(),
     }
 }
-
-fn key_obj_min(key: &str, val: &Json) -> Result<Option<Json>, Error> {
-    match val {
-        Json::Array(arr) => {
-            if arr.is_empty() {
-                return Ok(None);
-            }
-            let mut min = None;
-            for val in arr {
-                match val {
-                    Json::Object(obj) => {
-                        min = if let Some(val) = obj.get(key) {
-                            if let Some(max) = min {
-                                if json_lt(val, max).map_err(|_| Error::BadType)? {
-                                    Some(val)
-                                } else {
-                                    Some(max)
-                                }
-                            } else {
-                                Some(val)
-                            }
-                        } else {
-                            min
-                        };
-                    }
-                    _ => return Err(Error::BadObject),
-                }
-            }
-            Ok(min.cloned())
-        }
-        val => Ok(Some(val.clone())),
-    }
-}
-
-impl KeyedAggregate for KeyedMax {
-    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
-        for (k, v) in input {
-            let val = key_obj_max(&self.key, v).map_err(|err| {
-                eprintln!("{:?}", err);
-                Error::BadType
-            })?;
-            if let Some(val) = val {
-                let entry = output
-                    .entry(k.clone())
-                    .or_insert_with(|| Json::from(JsonObj::new()));
-                match entry {
-                    Json::Object(ref mut obj) => {
-                        obj.insert(self.col_name.clone(), val);
-                    }
-                    _ => return Err(Error::ExpectedObj),
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Default)]
-struct KeyedMin {
-    col_name: String,
-    key: String,
-}
-
-impl KeyedMin {
-    fn new<S: Into<String>>(col_name: S, key: String) -> Self {
-        KeyedMin {
-            col_name: col_name.into(),
-            key,
-        }
-    }
-}
-
-impl KeyedAggregate for KeyedMin {
-    //TODO refactor to make generic between this and KeyedMax as the logic is too similar
-    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
-        for (k, v) in input {
-            let val = key_obj_min(&self.key, v).map_err(|err| {
-                eprintln!("{:?}", err);
-                Error::BadType
-            })?;
-            if let Some(val) = val {
-                let entry = output
-                    .entry(k.clone())
-                    .or_insert_with(|| Json::from(JsonObj::new()));
-                match entry {
-                    Json::Object(ref mut obj) => {
-                        obj.insert(self.col_name.clone(), val);
-                    }
-                    _ => unimplemented!(),
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Default)]
-struct KeyedLast {
-    col_name: String,
-    key: String,
-}
-
-impl KeyedLast {
-    fn new<S: Into<String>>(name: S, key: String) -> Self {
-        KeyedLast {
-            col_name: name.into(),
-            key,
-        }
-    }
-}
-
-impl KeyedAggregate for KeyedLast {
-    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
-        for (k, v) in input {
-            let val = match v {
-                Json::Array(s) => {
-                    if s.is_empty() {
-                        return Ok(());
-                    }
-                    s[s.len() - 1].clone()
-                }
-                val => val.clone(),
-            };
-            output.insert(k.clone(), val);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Default)]
-struct KeyedFirst {
-    col_name: String,
-    key: String,
-}
-
-impl KeyedFirst {
-    fn new<S: Into<String>>(col_name: S, key: String) -> Self {
-        Self {
-            col_name: col_name.into(),
-            key,
-        }
-    }
-}
-
-impl KeyedAggregate for KeyedFirst {
-    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
-        for (key, val) in input {
-            let val = match val {
-                Json::Array(s) => {
-                    if s.is_empty() {
-                        return Ok(());
-                    }
-                    s[0].clone()
-                }
-                val => val.clone(),
-            };
-            output.insert(key.clone(), val);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Default)]
-struct Count {
-    col_name: String,
-    key: String,
-}
-
-impl Count {
-    fn new<S: Into<String>>(col_name: S, key: String) -> Count {
-        Self {
-            col_name: col_name.into(),
-            key,
-        }
-    }
-}
-
-impl KeyedAggregate for Count {
-    fn aggregate(&self, input: &JsonObj, output: &mut JsonObj) -> Result<(), Error> {
-        for (key, val) in input {
-            let entry = output
-                .entry(key.to_string())
-                .or_insert_with(|| Json::Object(JsonObj::new()));
-            match entry {
-                Json::Object(ref mut obj) => {
-                    obj.insert(self.col_name.clone(), Json::from(json_len(val)));
-                }
-                _ => return Err(Error::ExpectedObj),
-            }
-        }
-        Ok(())
-    }
-}
-
-
 
 /*
 trait Aggregate<'a> {
@@ -527,4 +340,3 @@ where
     Ok(agg.apply())
 }
 */
-

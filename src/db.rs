@@ -2,7 +2,6 @@ use crate::cmd::{Cmd, QueryCmd};
 use crate::err::Error;
 use crate::inmemdb::InMemDb;
 use crate::json::*;
-use crate::ondiskdb::OnDiskDb;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -18,7 +17,6 @@ fn unique(val: &Json) -> Result<Json, Error> {
 #[derive(Debug)]
 struct Cache {
     rdb: InMemDb,
-    hdb: OnDiskDb,
 }
 
 #[derive(Debug, Serialize)]
@@ -35,7 +33,6 @@ pub trait Db {
 #[derive(Debug)]
 pub struct Memson {
     cache: InMemDb,
-    db: OnDiskDb,
 }
 
 fn opt_val(r: Result<Option<Json>, Error>) -> Result<Json, Error> {
@@ -49,9 +46,7 @@ fn opt_val(r: Result<Option<Json>, Error>) -> Result<Json, Error> {
 impl Memson {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         fs::create_dir_all(&path).map_err(|err| Error::BadIO(err))?;
-        let db = OnDiskDb::open(path)?;
-        let cache = db.populate()?;
-        Ok(Self { cache, db })
+        Ok(Self { cache})
     }
 
     pub(crate) fn query(&self, cmd: QueryCmd) -> Result<Json, Error> {

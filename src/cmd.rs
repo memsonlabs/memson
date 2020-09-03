@@ -1,14 +1,18 @@
-use crate::json::{JsonObj, json_neq, json_eq, json_lt, json_gt, json_lte, json_gte};
 use crate::err::Error;
 use crate::err::ParseError;
+use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, JsonObj};
 use serde::{Deserialize, Serialize};
-use serde_json::Value as Json;
+use serde_json::{Map, Value as Json};
+use std::collections::{BTreeMap, HashMap};
+use vecmap::VecMap;
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+
 pub enum Filter {
     #[serde(rename = "==")]
     Eq(String, Json),
     #[serde(rename = "!=")]
-    NotEq(String, Json),   
+    NotEq(String, Json),
     #[serde(rename = ">")]
     Gt(String, Json),
     #[serde(rename = "<")]
@@ -24,7 +28,7 @@ pub enum Filter {
 }
 
 impl Filter {
-    pub fn apply(&self, row: &JsonObj) -> Result<bool, Error> {
+    pub fn apply(&self, row: &JsonObj) -> bool {
         match self {
             Filter::Eq(key, val) => Filter::eval(row, key, val, &json_eq),
             Filter::NotEq(key, val) => Filter::eval(row, key, val, &json_neq),
@@ -42,31 +46,29 @@ impl Filter {
         lhs: &Filter,
         rhs: &Filter,
         p: &dyn Fn(bool, bool) -> bool,
-    ) -> Result<bool, Error> {
-        let lhs = lhs.apply(row)?;
-        let rhs = rhs.apply(row)?;
-        Ok(p(lhs, rhs))
+    ) -> bool {
+        let lhs = lhs.apply(row);
+        let rhs = rhs.apply(row);
+        p(lhs, rhs)
     }
 
     fn eval(
         row: &JsonObj,
         key: &str,
         val: &Json,
-        predicate: &dyn Fn(&Json, &Json) -> Result<bool, Error>,
-    ) -> Result<bool, Error> {
+        predicate: &dyn Fn(&Json, &Json) -> bool,
+    ) -> bool {
         match row.get(key) {
             Some(v) => predicate(v, val),
-            None => Ok(false),
+            None => false,
         }
     }
 }
 
-
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct QueryCmd {
     #[serde(rename = "select")]
-    pub selects: Option<Json>,
+    pub selects: Option<HashMap<String, Cmd>>,
     pub from: String,
     pub by: Option<Json>,
     #[serde(rename = "where")]
@@ -85,7 +87,7 @@ pub enum Cmd {
     Append(String, Box<Cmd>),
     #[serde(rename = "set")]
     Set(String, Box<Cmd>),
-    #[serde(rename = "len")]
+    #[serde(rename = "count")]
     Count(Box<Cmd>),
     #[serde(rename = "max")]
     Max(Box<Cmd>),
@@ -124,41 +126,58 @@ pub enum Cmd {
     #[serde(rename = "len")]
     Len,
     #[serde(rename = "unique")]
-    Unique(Box<Cmd>), 
+    Unique(Box<Cmd>),
     #[serde(rename = "json")]
     Json(Json),
     #[serde(rename = "summary")]
-    Summary,    
+    Summary,
     #[serde(rename = "key")]
-    Key(String),        
-}
-
-fn bin_key(lhs: &Cmd, rhs: &Cmd) -> Option<Vec<String>> {
-    let lhs = Cmd::key(&lhs);
-    let rhs = Cmd::key(&rhs);
-    match (lhs, rhs) {
-        (Some(mut lhs), Some(rhs)) => {                    
-            lhs.extend(rhs);
-            Some(lhs)
-        }
-        (Some(v), None) | (None, Some(v)) => Some(v),
-        (None, None) => None,
-    }
+    Key(String),
 }
 
 impl Cmd {
-    pub fn key(&self) -> Option<Vec<String>> {
+    pub fn keys(&self) -> Option<Vec<String>> {
         match self {
-            Cmd::Add(ref lhs, ref rhs) => bin_key(lhs, rhs),
-            Cmd::Append(_, _) | Cmd::Delete(_) => None,
-            Cmd::Avg(arg) | Cmd::Count(arg) => Cmd::key(&arg),            
-            Cmd::Key(key) => Some(vec![key.clone()]),
-            _ => todo!(),
+            Cmd::Key(key) => Some(vec![key.to_string()]),
+            Cmd::Count(arg)
+            | Cmd::Last(arg)
+            | Cmd::Var(arg)
+            | Cmd::Avg(arg)
+            | Cmd::Min(arg)
+            | Cmd::Max(arg)
+            | Cmd::Sum(arg)
+            | Cmd::First(arg)
+            | Cmd::StdDev(arg)
+            | Cmd::Unique(arg) => arg.keys(),
+            Cmd::Add(lhs, rhs) | Cmd::Div(lhs, rhs) | Cmd::Mul(lhs, rhs) | Cmd::Sub(lhs, rhs) => {
+                match (lhs.keys(), rhs.keys()) {
+                    (Some(mut x), Some(y)) => {
+                        x.extend(y);
+                        Some(x)
+                    }
+                    (None, Some(v)) => Some(v),
+                    (Some(v), None) => Some(v),
+                    (None, None) => None,
+                }
+            }
+            Cmd::Summary
+            | Cmd::Len
+            | Cmd::Keys(_)
+            | Cmd::Insert(_, _)
+            | Cmd::Query(_)
+            | Cmd::Append(_, _)
+            | Cmd::Delete(_)
+            | Cmd::Pop(_)
+            | Cmd::Json(_)
+            | Cmd::Set(_, _) => None,
         }
     }
 }
 
-fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error> where F: FnOnce(Box<Cmd>, Box<Cmd>) -> Cmd {    
+fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
+where
+    F: FnOnce(Box<Cmd>, Box<Cmd>) -> Cmd,
+{
     match arg {
         Json::Array(mut arr) => {
             if arr.len() != 2 {
@@ -170,30 +189,20 @@ fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error> where F: FnOnce(Box<Cm
         }
         _ => unimplemented!(),
     }
-    
 }
 
-fn parse_bin_str_fn<F>(arg: Json, f: F) -> Result<Cmd, Error> where F: FnOnce(Box<Cmd>, Box<Cmd>) -> Cmd {    
-    match arg {
-        Json::Array(mut arr) => {
-            if arr.len() != 2 {
-                return Err(Error::BadCmd);
-            }
-            let rhs = Box::new(Cmd::parse(arr.pop().unwrap())?);
-            let lhs = Box::new(Cmd::parse(arr.pop().unwrap())?);
-            Ok(f(lhs, rhs))
-        }
-        _ => unimplemented!(),
-    }
-    
-}
-
-fn parse_unr_fn<F>(arg: Json, f: F) -> Result<Cmd, Error> where F: FnOnce(Box<Cmd>) -> Cmd {
+fn parse_unr_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
+where
+    F: FnOnce(Box<Cmd>) -> Cmd,
+{
     let val = Cmd::parse(arg)?;
     Ok(f(Box::new(val)))
 }
 
-fn parse_b_str_fn<F>(val: Json, f:F) -> Result<Cmd, Error> where F: FnOnce(String, Box<Cmd>) -> Cmd {
+fn parse_b_str_fn<F>(val: Json, f: F) -> Result<Cmd, Error>
+where
+    F: FnOnce(String, Box<Cmd>) -> Cmd,
+{
     match val {
         Json::Array(mut arr) => {
             if arr.len() != 2 {
@@ -210,7 +219,7 @@ fn parse_b_str_fn<F>(val: Json, f:F) -> Result<Cmd, Error> where F: FnOnce(Strin
     }
 }
 
-impl Cmd {    
+impl Cmd {
     pub fn parse_cmd(json: Json) -> Result<Cmd, ParseError> {
         serde_json::from_value(json).map_err(|_| ParseError::BadCmd)
     }
@@ -220,7 +229,7 @@ impl Cmd {
             Json::Object(obj) => {
                 if obj.len() == 1 {
                     let (key, val) = obj.clone().into_iter().next().unwrap();
-                    match key.as_ref() {                        
+                    match key.as_ref() {
                         "add" => parse_bin_fn(val, Cmd::Add),
                         "append" => parse_b_str_fn(val, Cmd::Append),
                         "sum" => parse_unr_fn(val, Cmd::Sum),
@@ -230,7 +239,7 @@ impl Cmd {
                                 _ => unimplemented!(),
                             };
                             Ok(Cmd::Key(key))
-                        }                        
+                        }
                         "first" => parse_unr_fn(val, Cmd::First),
                         "last" => parse_unr_fn(val, Cmd::Last),
                         "var" => parse_unr_fn(val, Cmd::Var),
@@ -246,57 +255,15 @@ impl Cmd {
                             Ok(Cmd::Query(qry_cmd))
                         }
                         "unique" => parse_unr_fn(val, Cmd::Unique),
-                        "set" => {
-                            parse_b_str_fn(val, Cmd::Set)
-                        }
+                        "set" => parse_b_str_fn(val, Cmd::Set),
                         "sub" => parse_bin_fn(val, Cmd::Sub),
-                        _ => Ok(Cmd::Json(Json::Object(obj)))
-                    }                    
+                        _ => Ok(Cmd::Json(Json::Object(obj))),
+                    }
                 } else {
                     Ok(Cmd::Json(Json::from(obj)))
                 }
-                
             }
-            val => Ok(Cmd::Json(val))
-        }
-    }
-
-    pub fn parse_obj(key: String, arg: Json) -> Result<Cmd, ParseError> {
-        match key.as_ref() {
-            "sum" => Self::parse_arg(arg, &Cmd::Sum),
-            "first" => Self::parse_arg(arg, &Cmd::First),
-            "last" => Self::parse_arg(arg, &Cmd::Last),
-            "pop" => Self::parse_arg_str(arg, &Cmd::Pop),
-            "var" => Self::parse_arg(arg, &Cmd::Var),
-            "dev" => Self::parse_arg(arg, &Cmd::StdDev),
-            "avg" => Self::parse_arg(arg, &Cmd::Avg),
-            "max" => Self::parse_arg(arg, &Cmd::Max),
-            "min" => Self::parse_arg(arg, &Cmd::Min),
-            "len" => Self::parse_arg(arg, &Cmd::Count),
-            "get" => Self::parse_arg_str(arg, &Cmd::Key),
-            _ => unimplemented!(),
-        }
-    }
-
-    fn parse_arg_str(arg: Json, f: &dyn Fn(String) -> Cmd) -> Result<Cmd, ParseError> {
-        match arg {
-            Json::String(key) => Ok(f(key)),
-            val => Err(ParseError::BadArgument(val)),
-        }
-    }
-
-    fn parse_arg<F>(arg: Json, f:F) -> Result<Cmd, ParseError> where F:FnOnce(Box<Cmd>) -> Cmd {
-        match arg {
-            Json::Object(obj) => {
-                for (_, val) in &obj {
-                    match val {
-                        Json::String(s) => return Ok(f(Box::new(Cmd::Key(s.to_string())))),
-                        val => return Err(ParseError::BadArgument(val.clone())),
-                    }
-                }
-                Err(ParseError::BadArgument(Json::from(obj)))
-            },
-            val => Err(ParseError::BadArgument(val)),
+            val => Ok(Cmd::Json(val)),
         }
     }
 
@@ -324,7 +291,6 @@ fn cmd_parse_json_string() {
     assert_eq!(Cmd::Json(val), cmd);
 }
 
-
 #[test]
 fn cmd_parse_sum() {
     use serde_json::json;
@@ -349,15 +315,14 @@ fn cmd_parse_get() {
     assert_eq!(Cmd::Key("k".to_string()), cmd);
 }
 
-
 #[test]
 fn cmd_parse_add() {
     use serde_json::json;
     let val = json!({"add": [{"get": "k"}, 1]});
     let cmd = Cmd::parse(val.clone()).unwrap();
     let exp = Cmd::Add(
-        Box::new(Cmd::Key("k".to_string())), 
-        Box::new(Cmd::Json(json!(1)))
+        Box::new(Cmd::Key("k".to_string())),
+        Box::new(Cmd::Json(json!(1))),
     );
     assert_eq!(exp, cmd);
 }

@@ -1,21 +1,19 @@
-use crate::db::Db;
 use crate::cmd::Cmd;
-use crate::inmemdb::InMemDb;
 use crate::err::Error;
+use crate::inmemdb::InMemDb;
 use crate::json::Json;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder};
-use clap::{Arg, App as Clap};
+use clap::{App as Clap, Arg};
 use serde::Serialize;
-use std::sync::{Arc, RwLock};
 use std::env;
+use std::sync::{Arc, RwLock};
 
 mod aggregate;
 mod cmd;
-mod db;
 mod err;
 mod inmemdb;
 mod json;
-mod ondiskdb;
+mod keyed;
 mod query;
 
 type MemsonDB = Arc<RwLock<InMemDb>>;
@@ -37,7 +35,7 @@ async fn eval(json: web::Json<Json>, db: web::Data<MemsonDB>) -> impl Responder 
     println!("{:?}", json);
     let cmd = match Cmd::parse(json.0) {
         Ok(cmd) => cmd,
-        Err(err) => return HttpResponse::BadRequest().json(err.to_string()),        
+        Err(err) => return HttpResponse::BadRequest().json(err.to_string()),
     };
     let mut db = db.write().unwrap();
     let r = db.eval(cmd);
@@ -51,21 +49,26 @@ async fn main() -> std::io::Result<()> {
         .version("0.1")
         .author("memson.io <hello@memson.io>")
         .about("in-memory json data store")
-        .arg(Arg::with_name("host")
-            .short("h")
-            .long("host")
-            .value_name("0.0.0.0")
-            .help("Sets the host to use")
-            .takes_value(true))
-
-        .arg(Arg::with_name("port")
-            .short("")
-            .long("port")
-            .help("Sets the port to use"))
-        .arg(Arg::with_name("dbpath")
-            .short("db")
-            .value_name("PATH")
-            .help("Sets the path for memson to store data"))
+        .arg(
+            Arg::with_name("host")
+                .short("h")
+                .long("host")
+                .value_name("0.0.0.0")
+                .help("Sets the host to use")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("port")
+                .short("")
+                .long("port")
+                .help("Sets the port to use"),
+        )
+        .arg(
+            Arg::with_name("dbpath")
+                .short("db")
+                .value_name("PATH")
+                .help("Sets the path for memson to store data"),
+        )
         .get_matches();
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
