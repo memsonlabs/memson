@@ -1,46 +1,53 @@
 use crate::cmd::Cmd;
 use crate::err::Error;
 use crate::inmemdb::InMemDb;
-use crate::json::Json;
-use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    middleware, web, App, HttpResponse, HttpServer,
+};
 use clap::{App as Clap, Arg};
 use serde::Serialize;
 use std::env;
+use std::fmt::Debug;
 use std::sync::{Arc, RwLock};
 
 mod aggregate;
 mod cmd;
 mod err;
+mod eval;
 mod inmemdb;
 mod json;
 mod keyed;
 mod query;
 
-type MemsonDB = Arc<RwLock<InMemDb>>;
+/// This is state where we will store *DbExecutor* address.
+type Memson = Arc<RwLock<InMemDb>>;
 
-fn http_resp<T: Serialize>(r: Result<T, Error>) -> HttpResponse {
+fn http_resp<T: Debug + Serialize>(r: Result<T, Error>) -> HttpResponse {
+    println!("r={:?}", r);
     match r {
         Ok(val) => HttpResponse::Ok().json(val),
-        Err(err) => HttpResponse::BadRequest().json(err.to_string()),
+        Err(_) => HttpResponse::InternalServerError().into(),
     }
 }
 
-async fn summary(db: web::Data<MemsonDB>) -> impl Responder {
-    let mut db = db.write().unwrap();
-    let summary = db.eval(Cmd::Summary).unwrap();
-    HttpResponse::Ok().json(summary)
+async fn summary(db: web::Data<Memson>) -> HttpResponse {
+    let mut db = match db.write() {
+        Ok(db) => db,
+        Err(_) => return HttpResponse::InternalServerError().into(),
+    };
+    let res = db.eval(Cmd::Summary);
+    http_resp(res)
 }
 
-async fn eval(json: web::Json<Json>, db: web::Data<MemsonDB>) -> impl Responder {
-    println!("{:?}", json);
-    let cmd = match Cmd::parse(json.0) {
-        Ok(cmd) => cmd,
-        Err(err) => return HttpResponse::BadRequest().json(err.to_string()),
+async fn eval(db: web::Data<Memson>, cmd: web::Json<Cmd>) -> HttpResponse {
+    // Send message to `DbExecutor` actor
+    println!("eval({:?})", cmd.0);
+    let mut db = match db.write() {
+        Ok(db) => db,
+        Err(_) => return HttpResponse::InternalServerError().into(),
     };
-    let mut db = db.write().unwrap();
-    let r = db.eval(cmd);
-    println!("r={:?}", r);
-    http_resp(r)
+    let res = db.eval(cmd.0);
+    http_resp(res)
 }
 
 #[actix_rt::main]
@@ -78,13 +85,14 @@ async fn main() -> std::io::Result<()> {
 
     let addr = host + ":" + &port;
     println!("deploying on {:?}", addr);
+
     let db = InMemDb::new();
-    let db: MemsonDB = Arc::new(RwLock::new(db));
+    let db_data = Arc::new(RwLock::new(db));
     HttpServer::new(move || {
         App::new()
             //enable logger
             .wrap(middleware::Logger::default())
-            .data(db.clone())
+            .data(db_data.clone())
             .service(web::resource("/cmd").route(web::post().to(eval)))
             .service(web::resource("/").route(web::get().to(summary)))
     })

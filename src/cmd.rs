@@ -1,10 +1,8 @@
 use crate::err::Error;
-use crate::err::ParseError;
-use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, JsonObj};
+use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, Json, JsonObj};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value as Json};
-use std::collections::{BTreeMap, HashMap};
-use vecmap::VecMap;
+use serde_json::Map;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 
@@ -136,9 +134,10 @@ pub enum Cmd {
 }
 
 impl Cmd {
+
     pub fn keys(&self) -> Option<Vec<String>> {
         match self {
-            Cmd::Key(key) => Some(vec![key.to_string()]),
+            Cmd::Key(key) => Some(vec![key.clone()]),
             Cmd::Count(arg)
             | Cmd::Last(arg)
             | Cmd::Var(arg)
@@ -170,6 +169,15 @@ impl Cmd {
             | Cmd::Pop(_)
             | Cmd::Json(_)
             | Cmd::Set(_, _) => None,
+        }
+    }
+
+    pub fn is_mutate(&self) -> bool {
+        match self {
+            Cmd::Key(_) => false,
+            Cmd::Add(_, _) => true,
+            Cmd::Unique(_) => true,
+            _ => false,
         }
     }
 }
@@ -220,10 +228,6 @@ where
 }
 
 impl Cmd {
-    pub fn parse_cmd(json: Json) -> Result<Cmd, ParseError> {
-        serde_json::from_value(json).map_err(|_| ParseError::BadCmd)
-    }
-
     pub fn parse(json: Json) -> Result<Self, Error> {
         match json {
             Json::Object(obj) => {
@@ -277,7 +281,8 @@ impl Cmd {
             | Cmd::StdDev(_)
             | Cmd::Last(_)
             | Cmd::Sum(_)
-            | Cmd::Var(_) => true,
+            | Cmd::Var(_)
+            | Cmd::Last(_) => true,
             _ => false,
         }
     }

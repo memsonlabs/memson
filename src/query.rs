@@ -41,7 +41,7 @@ where
     match *arg {
         Cmd::Key(key) => {
             println!("returning max agg");
-            Ok(f(name, key.to_string()))
+            Ok(f(name, key))
         }
         _ => unimplemented!(),
     }
@@ -97,7 +97,7 @@ fn eval_keyed_cmd(data: &JsonObj, cmd: &Cmd, out: &mut JsonObj) -> Result<(), Er
                 }
                 Ok(())
             }
-            arg => unimplemented!(),
+            _ => unimplemented!(),
         },
         Cmd::Min(arg) => match **arg {
             Cmd::Key(_) => unimplemented!(),

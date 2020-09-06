@@ -7,12 +7,11 @@ edition = "2018"
 [dependencies]
 actix-web = "*"
 actix-rt = "*"
-clap = "*"
 bincode = "*"
+clap = "*"
 env_logger = "*"
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
-sled = "*"
+serde_json = "*"
+serde = { version = "*", features = ["derive"] }
 vecmap = "*"
 
 [dev-dependencies]

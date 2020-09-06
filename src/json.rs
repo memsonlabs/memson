@@ -21,19 +21,6 @@ pub fn unique(val: &Json) -> Result<Json, Error> {
     Ok(json_unique(val))
 }
 
-pub fn json_string(val: &Json) -> Option<&str> {
-    match val {
-        Json::String(s) => Some(s),
-        _ => None,
-    }
-}
-
-pub fn json_len(val: &Json) -> usize {
-    match val {
-        Json::Array(ref arr) => arr.len(),
-        _ => 1,
-    }
-}
 //TODO make generic comparison
 pub fn json_num_gt(x: &JsonNum, y: &JsonNum) -> bool {
     match (x.as_f64(), y.as_f64()) {
@@ -173,7 +160,7 @@ fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> b
             let cmp = Cmp::new(*x, *y);
             p(&cmp)
         }
-        _ => unimplemented!(),
+        _ => false,
     }
 }
 
@@ -234,7 +221,7 @@ pub fn insert_rows(val: &mut Json, rows: Vec<Json>) -> Result<usize, Error> {
             }
             Ok(n)
         }
-        _ => Err(Error::BadInsert),
+        _ => Err(Error::BadType),
     }
 }
 
@@ -252,11 +239,11 @@ pub fn json_last(val: &Json) -> &Json {
     }
 }
 
-pub fn json_sum(val: &Json) -> Result<Json, Error> {
+pub fn json_sum(val: &Json) -> Json {
     match val {
-        Json::Number(val) => Ok(Json::Number(val.clone())),
-        Json::Array(ref arr) => Ok(json_arr_sum(arr)),
-        _ => Err(Error::BadType),
+        Json::Number(val) => Json::Number(val.clone()),
+        Json::Array(ref arr) => json_arr_sum(arr),
+        _ => Json::Null,
     }
 }
 
@@ -562,7 +549,7 @@ fn add_jsons(lhs: &Option<JsonNum>, rhs: &Json) -> Result<JsonNum, Error> {
     match (lhs, rhs) {
         (None, Json::Number(n)) => Ok(n.clone()),
         (Some(x), Json::Number(y)) => Ok(add_nums(x, y)),
-        _ => Err(Error::BadNumber),
+        _ => Err(Error::BadType),
     }
 }
 
@@ -980,7 +967,7 @@ pub fn json_get(key: &str, val: &Json) -> Option<Json> {
                 None
             }
         }
-        val => None,
+        _ => None,
     }
 }
 
