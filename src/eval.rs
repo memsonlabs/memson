@@ -31,8 +31,6 @@ pub fn key(keys: &[String], mut val: Option<Json>) -> Option<Json> {
     val
 }
 
-
-
 mod tests {
     use crate::eval::*;
     use serde_json::json;
@@ -66,7 +64,10 @@ mod tests {
         );
         assert_eq!(
             Some(json!(["james", "ania", "misha"])),
-            key(&["name".to_string(), "first".to_string()], Some(val.clone()))
+            key(
+                &["name".to_string(), "first".to_string()],
+                Some(val.clone())
+            )
         );
         assert_eq!(
             Some(json!(["perry", "protsenko"])),
@@ -91,7 +92,10 @@ mod tests {
         );
         assert_eq!(
             Some(json!(["james", "ania", "misha"])),
-            key(&["name".to_string(), "first".to_string()], Some(val.clone()))
+            key(
+                &["name".to_string(), "first".to_string()],
+                Some(val.clone())
+            )
         );
         assert_eq!(
             Some(json!(["perry", "protsenko"])),

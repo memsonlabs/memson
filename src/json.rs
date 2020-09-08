@@ -2,6 +2,7 @@ use crate::err::Error;
 
 pub use serde_json::{json, Map};
 
+use serde_json::Number;
 use std::cmp::PartialOrd;
 use std::mem;
 
@@ -9,49 +10,12 @@ pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
 
-pub fn json_obj() -> Json {
-    Json::Object(JsonObj::new())
-}
-
 pub fn count(val: &Json) -> Result<Json, Error> {
     Ok(json_count(val))
 }
 
 pub fn unique(val: &Json) -> Result<Json, Error> {
     Ok(json_unique(val))
-}
-
-//TODO make generic comparison
-pub fn json_num_gt(x: &JsonNum, y: &JsonNum) -> bool {
-    match (x.as_f64(), y.as_f64()) {
-        (Some(x), Some(y)) => x > y,
-        _ => false,
-    }
-}
-
-pub fn json_increment(val: &mut Json) {
-    match val {
-        Json::Number(num) => {
-            *num = if num.is_i64() {
-                JsonNum::from(num.as_i64().unwrap() + 1)
-            } else {
-                JsonNum::from_f64(num.as_f64().unwrap() + 1.0).unwrap()
-            };
-        }
-        _ => (),
-    }
-}
-
-//TODO make generic comparison
-pub fn json_num_lt(x: &JsonNum, y: &JsonNum) -> Option<bool> {
-    match (x.is_i64(), y.is_i64()) {
-        (true, true) => {
-            let xv = x.as_i64().unwrap();
-            let yv = y.as_i64().unwrap();
-            Some(xv < yv)
-        }
-        _ => None,
-    }
 }
 
 trait Compare {
@@ -110,26 +74,6 @@ impl GtLt for Lt {
     fn apply<T: Ord>(&self, x: T, y: T) -> bool {
         x < y
     }
-}
-
-pub fn json_add_num(x: &Json, y: &JsonNum) -> Option<Json> {
-    let x = match x {
-        Json::Number(x) => x,
-        _ => return None,
-    };
-    let val = match (x.is_i64(), y.is_i64()) {
-        (true, true) => {
-            let x: i64 = x.as_i64().unwrap();
-            let y: i64 = y.as_i64().unwrap();
-            Json::from(x + y)
-        }
-        _ => {
-            let x = x.as_f64().unwrap();
-            let y = y.as_f64().unwrap();
-            Json::from(x + y)
-        }
-    };
-    Some(val)
 }
 
 pub fn json_eq(x: &Json, y: &Json) -> bool {
@@ -212,19 +156,6 @@ pub fn json_append(val: &mut Json, elem: Json) {
     }
 }
 
-pub fn insert_rows(val: &mut Json, rows: Vec<Json>) -> Result<usize, Error> {
-    match val {
-        Json::Array(ref mut arr) => {
-            let n = rows.len();
-            for row in rows {
-                arr.push(row);
-            }
-            Ok(n)
-        }
-        _ => Err(Error::BadType),
-    }
-}
-
 pub fn json_first(val: &Json) -> &Json {
     match val {
         Json::Array(ref arr) if !arr.is_empty() => &arr[0],
@@ -299,6 +230,41 @@ pub fn json_add(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
         (Json::String(lhs), Json::String(rhs)) => json_add_str(lhs, rhs),
         (Json::String(lhs), Json::Array(rhs)) => add_str_arr(lhs, rhs),
         (Json::Array(lhs), Json::String(rhs)) => add_arr_str(lhs, rhs),
+        _ => Err(Error::BadType),
+    }
+}
+
+//TODO(jaupe) add more cases
+pub fn json_bar(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
+    match (lhs, rhs) {
+        (Json::Array(lhs), Json::Array(rhs)) => json_bar_arrs(lhs, rhs),
+        (Json::Array(lhs), rhs) => json_bar_arr_val(lhs, rhs),
+        (Json::Number(lhs), Json::Number(rhs)) => json_bar_num_num(lhs, rhs),
+        _ => Err(Error::BadType),
+    }
+}
+
+fn json_bar_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
+    let mut out = Vec::new();
+    for (x, y) in lhs.iter().zip(rhs.iter()) {
+        let val = json_bar(x, y)?;
+        out.push(val);
+    }
+    Ok(Json::Array(out))
+}
+
+fn json_bar_arr_val(lhs: &[Json], rhs: &Json) -> Result<Json, Error> {
+    let mut out = Vec::new();
+    for val in lhs {
+        let val = json_bar(val, rhs)?;
+        out.push(val);
+    }
+    Ok(Json::Array(out))
+}
+
+fn json_bar_num_num(lhs: &Number, rhs: &Number) -> Result<Json, Error> {
+    match (lhs.as_i64(), rhs.as_i64()) {
+        (Some(x), Some(y)) => Ok(Json::from(x / y * y)),
         _ => Err(Error::BadType),
     }
 }
@@ -530,29 +496,6 @@ pub fn json_min(val: &Json) -> &Json {
     }
 }
 
-fn add_nums(x: &JsonNum, y: &JsonNum) -> JsonNum {
-    match (x.is_i64(), y.is_i64()) {
-        (true, true) => {
-            let x = x.as_u64().unwrap();
-            let y = y.as_u64().unwrap();
-            JsonNum::from(x + y)
-        }
-        _ => {
-            let x = x.as_f64().unwrap();
-            let y = y.as_f64().unwrap();
-            JsonNum::from_f64(x + y).unwrap()
-        }
-    }
-}
-
-fn add_jsons(lhs: &Option<JsonNum>, rhs: &Json) -> Result<JsonNum, Error> {
-    match (lhs, rhs) {
-        (None, Json::Number(n)) => Ok(n.clone()),
-        (Some(x), Json::Number(y)) => Ok(add_nums(x, y)),
-        _ => Err(Error::BadType),
-    }
-}
-
 fn json_arr_sum(s: &[Json]) -> Json {
     let mut total = JsonNum::from(0);
     for val in s {
@@ -570,13 +513,6 @@ pub fn json_obj_ref(val: &Json) -> Result<&JsonObj, Error> {
     match val {
         Json::Object(obj) => Ok(obj),
         _ => Err(Error::ExpectedObj),
-    }
-}
-
-pub fn json_obj_mut_ref(val: &mut Json) -> &mut JsonObj {
-    match val {
-        Json::Object(obj) => obj,
-        _ => panic!(),
     }
 }
 
@@ -647,300 +583,11 @@ fn arr_min(s: &[Json]) -> &Json {
     min
 }
 
-pub fn to_rows(val: Json) -> Result<Vec<Json>, Error> {
-    match val {
-        Json::Array(arr) => Ok(arr),
-        _ => Err(Error::ExpectedArr),
-    }
+pub fn json_string(x: &Json) -> Json {
+    Json::String(x.to_string())
 }
 
-/*
-pub fn parse_json_str<S: Into<String>>(s: S) -> Res<Cmd> {
-    let json_val = serde_json::from_str(&s.into()).map_err(|_| BAD_JSON)?;
-    parse_json_val(json_val)
-}
-
-fn parse_json_val(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => parse_obj(obj),
-        val => Ok(Cmd::Val(val)),
-    }
-}
-
-fn parse_obj(obj: Map<String, Json>) -> Res<Cmd> {
-    if obj.len() != 1 {
-        return Err("not one key");
-    }
-    for (key, val) in obj {
-        match key.as_ref() {
-            "get" => return parse_get(val),
-            "del" => return parse_del(val),
-            "set" => return parse_set(val),
-            "min" => return parse_min(val),
-            "max" => return parse_max(val),
-            "sum" => return parse_sum(val),
-            "avg" => return parse_avg(val),
-            "var" => return parse_var(val),
-            "dev" => return parse_dev(val),
-            "first" => return parse_first(val),
-            "last" => return parse_last(val),
-            "+" => return parse_add(val),
-            "-" => return parse_sub(val),
-            "*" => return parse_mul(val),
-            "/" => return parse_div(val),
-            _ => unimplemented!(),
-        }
-    }
-    Ok(Cmd::Set("k1".to_string(), Json::Bool(true)))
-}
-
-fn parse_min(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::Min(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::Min(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_max(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::Max(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::Max(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_avg(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::Avg(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::Sum(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_var(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::Var(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::Sum(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_dev(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::Dev(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::Sum(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_sum(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::Sum(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::Sum(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_get(val: Json) -> Res<Cmd> {
-    match val {
-        Json::String(key) => Ok(Cmd::Key(key)),
-        _ => Err(Error::BadType),
-    }
-}
-
-fn parse_del(val: Json) -> Res<Cmd> {
-    match val {
-        Json::String(key) => Ok(Cmd::Del(key)),
-        _ => Err(Error::BadType),
-    }
-}
-
-fn parse_set(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Array(mut arr) => {
-            let val = arr.remove(1);
-            let key = arr.remove(0);
-            let key = match key {
-                Json::String(key) => key,
-                _ => unimplemented!(),
-            };
-            Ok(Cmd::Set(key, val))
-        }
-        Json::Object(_obj) => unimplemented!(),
-        _ => unimplemented!(),
-    }
-}
-
-fn parse_first(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::First(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::First(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_last(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Object(obj) => Ok(Cmd::Last(Box::new(parse_obj(obj)?))),
-        val => Ok(Cmd::Last(Box::new(Cmd::Val(val)))),
-    }
-}
-
-fn parse_add(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Array(mut arr) => {
-            let rhs = parse_json_val(arr.remove(1))?;
-            let lhs = parse_json_val(arr.remove(0))?;
-            Ok(Cmd::Add(Box::new(lhs), Box::new(rhs)))
-        }
-        _ => unimplemented!(),
-    }
-}
-
-fn parse_sub(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Array(mut arr) => {
-            let rhs = parse_json_val(arr.remove(1))?;
-            let lhs = parse_json_val(arr.remove(0))?;
-            Ok(Cmd::Sub(Box::new(lhs), Box::new(rhs)))
-        }
-        _ => unimplemented!(),
-    }
-}
-
-fn parse_mul(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Array(mut arr) => {
-            let rhs = parse_json_val(arr.remove(1))?;
-            let lhs = parse_json_val(arr.remove(0))?;
-            Ok(Cmd::Mul(Box::new(lhs), Box::new(rhs)))
-        }
-        _ => unimplemented!(),
-    }
-}
-
-fn parse_div(val: Json) -> Res<Cmd> {
-    match val {
-        Json::Array(mut arr) => {
-            let rhs = parse_json_val(arr.remove(1))?;
-            let lhs = parse_json_val(arr.remove(0))?;
-            Ok(Cmd::Div(Box::new(lhs), Box::new(rhs)))
-        }
-        _ => unimplemented!(),
-    }
-}
-*/
-/*
-pub fn eval_json_cmd(cmd: Cmd, db: &mut Database) -> Res {
-    match cmd {
-        Cmd::Key(ref key) => db.get(key).map(|x| x.clone()).ok_or(BAD_KEY),
-        Cmd::Del(ref key) => match db.del(key) {
-            Ok(Some(val)) => Ok(val),
-            Ok(None) => Ok(Json::Null),
-            Err(_) => Err(BAD_IO),
-        },
-        Cmd::Set(key, val) => db_write(db, key, val),
-        Cmd::Sum(arg) => eval_sum(*arg, db),
-        Cmd::Min(arg) => eval_min(*arg, db),
-        Cmd::Max(arg) => eval_max(*arg, db),
-        Cmd::Val(val) => Ok(val),
-        Cmd::Avg(arg) => eval_avg(*arg, db),
-        Cmd::Dev(arg) => eval_dev(*arg, db),
-        Cmd::Var(arg) => eval_var(*arg, db),
-        Cmd::First(arg) => eval_first(*arg, db),
-        Cmd::Last(arg) => eval_last(*arg, db),
-        Cmd::Add(lhs, rhs) => eval_add(*lhs, *rhs, db),
-        Cmd::Sub(lhs, rhs) => eval_sub(*lhs, *rhs, db),
-        Cmd::Mul(lhs, rhs) => eval_mul(*lhs, *rhs, db),
-        Cmd::Div(lhs, rhs) => eval_div(*lhs, *rhs, db),
-    }
-}
-
-fn db_write(db: &mut Database, key: String, val: Json) -> Res {
-    match db.set(key, val) {
-        Ok(Some(val)) => Ok(val),
-        Ok(None) => Ok(Json::Null),
-        Err(_) => Err(BAD_WRITE),
-    }
-}
-
-fn eval_sum(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_sum(val),
-        Err(err) => Err(err),
-    }
-}
-
-fn eval_avg(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_avg(val),
-        Err(err) => Err(err),
-    }
-}
-
-fn eval_dev(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_dev(val),
-        Err(err) => Err(err),
-    }
-}
-
-fn eval_var(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_var(val),
-        Err(err) => Err(err),
-    }
-}
-
-fn eval_first(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_first(val),
-        Err(err) => Err(err),
-    }
-}
-
-fn eval_add(lhs: Cmd, rhs: Cmd, db: &mut Database) -> Res {
-    let x = eval_json_cmd(lhs, db)?;
-    let y = eval_json_cmd(rhs, db)?;
-    json_add(&x, &y)
-}
-
-fn eval_sub(lhs: Cmd, rhs: Cmd, db: &mut Database) -> Res {
-    let x = eval_json_cmd(lhs, db)?;
-    let y = eval_json_cmd(rhs, db)?;
-    json_sub(&x, &y)
-}
-
-fn eval_mul(lhs: Cmd, rhs: Cmd, db: &mut Database) -> Res {
-    let x = eval_json_cmd(lhs, db)?;
-    let y = eval_json_cmd(rhs, db)?;
-    json_mul(&x, &y)
-}
-
-fn eval_div(lhs: Cmd, rhs: Cmd, db: &mut Database) -> Res {
-    let x = eval_json_cmd(lhs, db)?;
-    let y = eval_json_cmd(rhs, db)?;
-    json_div(&x, &y)
-}
-
-fn eval_last(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_last(val),
-        Err(err) => Err(err),
-    }
-}
-
-fn eval_max(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_max(val),
-        Err(err) => Err(err),
-    }
-}
-
-fn eval_min(arg: Cmd, db: &mut Database) -> Res {
-    match eval_json_cmd(arg, db) {
-        Ok(ref val) => json_min(val),
-        Err(err) => Err(err),
-    }
-}
-
-*/
-
-pub fn json_get(key: &str, val: &Json) -> Option<Json> {
+pub fn json_get<'a>(key: &str, val: &'a Json) -> Option<Json> {
     match val {
         Json::Array(arr) => {
             if arr.is_empty() {
@@ -960,9 +607,7 @@ pub fn json_get(key: &str, val: &Json) -> Option<Json> {
         }
         Json::Object(obj) => {
             if let Some(val) = obj.get(key) {
-                let mut obj = JsonObj::new();
-                obj.insert(key.to_string(), val.clone());
-                Some(Json::Object(obj))
+                Some(val.clone())
             } else {
                 None
             }
@@ -983,29 +628,75 @@ pub fn json_push(to: &mut Json, val: Json) {
     };
 }
 
-pub fn json_mut_append(val: &mut Json, arg: Json) {
+pub fn json_insert(val: &mut Json, rows: Vec<JsonObj>) {
     match val {
-        Json::Null => *val = arg,
-        Json::Array(ref mut arr) => arr.push(arg),
-        val => *val = Json::Array(vec![arg]),
+        Json::Array(ref mut arr) => arr.extend(rows.into_iter().map(Json::Object)),
+        val => {
+            let mut arr = vec![val.clone()];
+            arr.extend(rows.into_iter().map(Json::Object));
+            *val = Json::Array(arr);
+        }
     }
 }
 
-#[test]
-fn append_obj_ok() {
-    use serde_json::json;
-    let mut obj = json!({"name":"james"});
-    let elem = json!({"age": 45});
-    json_append(&mut obj, elem);
-    assert_eq!(obj, json!({"name": "james", "age": 45}));
-}
+mod tests {
 
-#[test]
-fn json_append_obj() {
-    let mut obj = json!({"name":"anna", "age": 28});
-    json_append(&mut obj, json!({"email": "anna@gmail.com"}));
-    assert_eq!(
-        obj,
-        json!({"name": "anna", "age": 28, "email": "anna@gmail.com"})
-    )
+    use crate::json::*;
+
+    #[test]
+    fn append_obj_ok() {
+        use serde_json::json;
+        let mut obj = json!({"name":"james"});
+        let elem = json!({"age": 45});
+        json_append(&mut obj, elem);
+        assert_eq!(obj, json!({"name": "james", "age": 45}));
+    }
+
+    #[test]
+    fn json_append_obj() {
+        let mut obj = json!({"name":"anna", "age": 28});
+        json_append(&mut obj, json!({"email": "anna@gmail.com"}));
+        assert_eq!(
+            obj,
+            json!({"name": "anna", "age": 28, "email": "anna@gmail.com"})
+        )
+    }
+
+    #[test]
+    fn json_get_arr_obj() {
+        let obj = json!({"name":"anna", "age": 28});
+        assert_eq!(Some(Json::from("anna")), json_get("name", &obj));
+        assert_eq!(Some(Json::from(28)), json_get("age", &obj));
+    }
+
+    #[test]
+    fn json_insert_arr() {
+        let f = |x: Json| x.as_object().cloned().unwrap();
+        let mut val = json!([{"name":"anna", "age": 28}]);
+        json_insert(
+            &mut val,
+            vec![
+                f(json!({"name":"james", "age": 32})),
+                f(json!({"name":"misha", "age": 9})),
+            ],
+        );
+        assert_eq!(
+            json!([
+                {"name":"anna", "age": 28},
+                {"name":"james", "age": 32},
+                {"name":"misha", "age": 9},
+            ]),
+            val
+        );
+    }
+
+    #[test]
+    fn json_bar_ok() {
+        let lhs = json!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let rhs = Json::from(2);
+        assert_eq!(
+            Ok(json!([0, 0, 2, 2, 4, 4, 6, 6, 8, 8])),
+            json_bar(&lhs, &rhs)
+        );
+    }
 }
