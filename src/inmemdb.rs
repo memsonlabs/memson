@@ -32,7 +32,7 @@ impl InMemDb {
     }
 
     fn key(&self, key: &str) -> Result<Json, Error> {
-        self.cache.get(key).cloned().ok_or(Error::BadKey)
+        self.get_ref(key).map(|x| x.clone())
     }
 
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
@@ -90,7 +90,7 @@ impl InMemDb {
             Cmd::Key(key) => {
                 let mut it = key.split('.');
                 let key = it.next().ok_or(Error::BadKey)?;
-                let mut val = self.cache.get(key).cloned().ok_or(Error::BadKey)?;
+                let mut val = self.key(key)?;
                 while let Some(key) = it.next() {
                     if let Some(v) = json_get(key, &val) {
                         val = v;
@@ -294,9 +294,7 @@ impl<'a> Query<'a> {
     }
 
     fn eval_keyed_select(&self, by: &[Json], rows: &[Json]) -> Result<Json, Error> {
-        println!("eval_keyed_select({:?}, {:?}", by, rows);
         let ids = self.parse_keys()?; // TODO remove unwrap
-        println!("ids={:?}", ids);
         // split data by key
         let mut split = JsonObj::new();
         if let Some(keys) = ids {
@@ -318,10 +316,8 @@ impl<'a> Query<'a> {
                 };
                 populate_entry(&mut split, by_key, keyed_val);
             }
-            println!("{:?}", split);
             // reduce keyed data
             let out = if let Some(reductions) = self.parse_reduce_vec()? {
-                println!("reductions={:?}", reductions);
                 keyed_reduce(&split, reductions.as_slice())?
             } else {
                 split
@@ -373,9 +369,7 @@ impl<'a> Query<'a> {
         //todo the cmds vec is not neccessary
 
         if has_aggregation(&selects) {
-            println!("aggregation has started");
             let out = reduce(selects, rows);
-            println!("out={:?}", out);
             Ok(Json::Object(out))
         } else {
             eval_nonaggregate(&selects, rows)

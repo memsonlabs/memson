@@ -18,7 +18,6 @@ mod keyed;
 type Memson = Arc<RwLock<InMemDb>>;
 
 fn http_resp<T: Debug + Serialize>(r: Result<T, Error>) -> HttpResponse {
-    println!("r={:?}", r);
     match r {
         Ok(val) => HttpResponse::Ok().json(val),
         Err(_) => HttpResponse::InternalServerError().into(),
@@ -36,12 +35,20 @@ async fn summary(db: web::Data<Memson>) -> HttpResponse {
 
 async fn eval(db: web::Data<Memson>, cmd: web::Json<Cmd>) -> HttpResponse {
     // Send message to `DbExecutor` actor
-    println!("eval({:?})", cmd.0);
-    let mut db = match db.write() {
-        Ok(db) => db,
-        Err(_) => return HttpResponse::InternalServerError().into(),
+    let res =  if cmd.is_read() {
+        let db = match db.read() {
+            Ok(db) => db,
+            Err(_) => return HttpResponse::InternalServerError().into(),
+        };
+
+        db.eval_read(&cmd.0)
+    } else {
+        let mut db = match db.write() {
+            Ok(db) => db,
+            Err(_) => return HttpResponse::InternalServerError().into(),
+        };
+        db.eval(cmd.0)
     };
-    let res = db.eval(cmd.0);
     http_resp(res)
 }
 

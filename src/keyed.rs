@@ -41,7 +41,6 @@ pub fn keyed_reduce(input: &JsonObj, reductions: &[(&String, &Cmd)]) -> Result<J
         let mut obj = JsonObj::new();
         for select in reductions {
             let keyed_val = eval_keyed_cmd(select.1, val)?;
-            println!("keyed_val={:?}", keyed_val);
             obj.insert(select.0.to_string(), keyed_val);
         }
         if !obj.is_empty() {

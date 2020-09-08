@@ -243,7 +243,7 @@ where
             };
             Ok(f(key, Box::new(arg)))
         }
-        _ => return Err(Error::BadCmd),
+        _ => Err(Error::BadCmd),
     }
 }
 
