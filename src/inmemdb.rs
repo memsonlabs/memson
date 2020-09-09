@@ -42,6 +42,9 @@ impl InMemDb {
             }
             Cmd::Json(val) => Ok(val), 
             Cmd::Key(key) => self.key(&key),
+            Cmd::Keys(_) => Ok(self.keys()),
+            Cmd::Last(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_last(x).clone())),
+            Cmd::Len => Ok(Json::from(self.cache.len())),
             Cmd::Max(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_max(x).clone())),
             Cmd::Min(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_min(x).clone())),
             Cmd::Mul(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_mul),
@@ -51,6 +54,7 @@ impl InMemDb {
             Cmd::Summary => Ok(self.summary()),
             Cmd::ToString(arg) => self.eval_read_unr_cmd(arg, |x| Ok(Json::from(json_tostring(x)))),
             Cmd::Unique(arg) =>  self.eval_read_unr_cmd(arg, |x| Ok(json_unique(x))),
+            Cmd::Var(arg) => self.eval_read_unr_cmd(arg, json_var),
             Cmd::Query(cmd) => {
                 let query = Query::from(self, cmd);
                 query.exec()

@@ -40,8 +40,7 @@ async fn eval(db: web::Data<Memson>, cmd: web::Json<Cmd>) -> HttpResponse {
             Ok(db) => db,
             Err(_) => return HttpResponse::InternalServerError().into(),
         };
-
-        db.eval_read(&cmd.0)
+        db.eval_read(cmd.0)
     } else {
         let mut db = match db.write() {
             Ok(db) => db,
