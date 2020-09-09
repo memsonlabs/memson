@@ -12,22 +12,49 @@ pub struct InMemDb {
     cache: Map<String, Json>,
 }
 
+
+
 impl InMemDb {
-    pub fn eval_read(&self, cmd: &Cmd) -> Result<Json, Error> {
+    fn eval_read_bin_cmd<F>(&self, lhs: Box<Cmd>, rhs: Box<Cmd>, f: F) -> Result<Json, Error> where F:FnOnce(&Json, &Json) -> Result<Json, Error> {
+        let x = self.eval_read(*lhs)?;
+        let y = self.eval_read(*rhs)?;
+        f(&x, &y)
+    }
+
+    fn eval_read_unr_cmd<F>(&self, arg: Box<Cmd>, f: F) -> Result<Json, Error> where F:FnOnce(&Json) -> Result<Json, Error> {
+        let val = self.eval_read(*arg)?;
+        f(&val)
+    }    
+
+    pub fn eval_read(&self, cmd: Cmd) -> Result<Json, Error> {
+        println!("{:?}", cmd);
         match cmd {
-            Cmd::Append(_, _) => Err(Error::BadCmd),
-            Cmd::Add(lhs, rhs) => {
-                let x = self.eval_read(lhs.as_ref())?;
-                let y = self.eval_read(rhs.as_ref())?;
-                json_add(&x, &y)
+            Cmd::Append(_, _) | Cmd::Delete(_) | Cmd::Set(_, _) | Cmd::Insert(_, _) | Cmd::Pop(_) | Cmd::Push(_, _) => Err(Error::BadCmd),
+            Cmd::Add(lhs, rhs) => self.eval_read_bin_cmd(lhs,rhs, json_add),
+            Cmd::Avg(arg) => self.eval_read_unr_cmd(arg, json_avg),
+            Cmd::Bar(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_bar),
+            Cmd::Count(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_count(x))),
+            Cmd::Div(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_div),
+            Cmd::First(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_first(x).clone())),
+            Cmd::Get(key, arg) => {
+                let val = self.eval_read(*arg)?;
+                json_get(&key, &val).ok_or(Error::BadKey)
             }
-            Cmd::Key(key) => self.key(key),
-            Cmd::Bar(lhs, rhs) => {
-                let x = self.eval_read(lhs.as_ref())?;
-                let y = self.eval_read(rhs.as_ref())?;
-                json_bar(&x, &y)
-            }
-            _ => unimplemented!()
+            Cmd::Json(val) => Ok(val), 
+            Cmd::Key(key) => self.key(&key),
+            Cmd::Max(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_max(x).clone())),
+            Cmd::Min(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_min(x).clone())),
+            Cmd::Mul(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_mul),
+            Cmd::StdDev(arg) => self.eval_read_unr_cmd(arg, json_dev),
+            Cmd::Sub(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_sub),
+            Cmd::Sum(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_sum(x))),
+            Cmd::Summary => Ok(self.summary()),
+            Cmd::ToString(arg) => self.eval_read_unr_cmd(arg, |x| Ok(Json::from(json_tostring(x)))),
+            Cmd::Unique(arg) =>  self.eval_read_unr_cmd(arg, |x| Ok(json_unique(x))),
+            Cmd::Query(cmd) => {
+                let query = Query::from(self, cmd);
+                query.exec()
+            }            
         }
     }
 

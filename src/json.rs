@@ -496,6 +496,13 @@ pub fn json_min(val: &Json) -> &Json {
     }
 }
 
+pub fn json_tostring(val: &Json) -> String {
+    match val {
+        Json::String(s) => s.to_string(),
+        val => val.to_string(),
+    }
+}
+
 fn json_arr_sum(s: &[Json]) -> Json {
     let mut total = JsonNum::from(0);
     for val in s {
