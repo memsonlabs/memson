@@ -67,7 +67,7 @@ pub struct QueryCmd {
     #[serde(rename = "select")]
     pub selects: Option<HashMap<String, Cmd>>,
     pub from: String,
-    pub by: Option<Box<Cmd>>,
+    pub by: Option<Json>,
     #[serde(rename = "where")]
     pub filter: Option<Filter>,
 }
@@ -136,7 +136,7 @@ pub enum Cmd {
     Get(String, Box<Cmd>),
     #[serde(rename = "key")]
     Key(String),
-    #[serde(rename = "toString")]
+    #[serde(rename = "str")]
     ToString(Box<Cmd>),
 }
 
@@ -247,6 +247,46 @@ where
     }
 }
 
+fn parse_insert(val: Json) -> Result<Cmd, Error> 
+{
+    match val {
+        Json::Array(mut arr) => {
+            if arr.len() != 2 {
+                return Err(Error::BadCmd);
+            }
+            let arg = arr.pop().unwrap();
+            let key = match arr.pop().unwrap() {
+                Json::String(s) => s,
+                _ => return Err(Error::BadCmd),
+            };
+            let rows = match arg {
+                Json::Array(arr) => {
+                    let mut rows = Vec::new();
+                    for val in arr {
+                        match val {
+                            Json::Object(obj) => rows.push(obj),
+                            _ => return Err(Error::BadCmd),
+                        }
+                    }
+                    rows
+                }
+                _ => return Err(Error::BadCmd),
+            };
+            Ok(Cmd::Insert(key, rows))
+        }
+        _ => Err(Error::BadCmd),
+    }
+}
+
+fn parse_unr_str_fn<F>(arg: Json, f: F) -> Result<Cmd, Error> where F:FnOnce(String) -> Cmd {
+    match arg {
+        Json::String(s) => Ok(f(s)),
+        _ => Err(Error::BadKey),
+    }
+}
+
+
+
 impl Cmd {
     pub fn parse(json: Json) -> Result<Self, Error> {
         match json {
@@ -254,36 +294,41 @@ impl Cmd {
                 if obj.len() == 1 {
                     let (key, val) = obj.clone().into_iter().next().unwrap();
                     match key.as_ref() {
-                        "+" | "add" => parse_bin_fn(val, Cmd::Add),
+                        "+" | "add" => parse_bin_fn(val, Cmd::Add),                        
                         "append" => parse_b_str_fn(val, Cmd::Append),
-                        "sum" => parse_unr_fn(val, Cmd::Sum),
-                        "get" => parse_b_str_fn(val, Cmd::Get),
-                        "first" => parse_unr_fn(val, Cmd::First),
-                        "last" => parse_unr_fn(val, Cmd::Last),
-                        "var" => parse_unr_fn(val, Cmd::Var),
+                        "avg" => parse_unr_fn(val, Cmd::Avg),
+                        "bar" => parse_bin_fn(val, Cmd::Bar),
+                        "count" => parse_unr_fn(val, Cmd::Count),
+                        "delete" => parse_unr_str_fn(val, Cmd::Delete),
                         "dev" => parse_unr_fn(val, Cmd::StdDev),
                         "/" | "div" => parse_bin_fn(val, Cmd::Div),
-                        "avg" => parse_unr_fn(val, Cmd::Avg),
+                        "first" => parse_unr_fn(val, Cmd::First),
+                        "get" => parse_b_str_fn(val, Cmd::Get),
+                        "insert" => parse_insert(val),
+                        "key" => parse_unr_str_fn(val, Cmd::Key),
+                        "last" => parse_unr_fn(val, Cmd::Last),                                            
                         "max" => parse_unr_fn(val, Cmd::Max),
                         "min" => parse_unr_fn(val, Cmd::Min),
                         "*" | "mul" => parse_bin_fn(val, Cmd::Mul),
+                        "pop" => parse_unr_str_fn(val, Cmd::Pop),
+                        "push" => parse_b_str_fn(val, Cmd::Push),
                         "query" => {
                             let qry_cmd = QueryCmd::parse(val)?;
                             Ok(Cmd::Query(qry_cmd))
                         }
-                        "unique" => parse_unr_fn(val, Cmd::Unique),
                         "set" => parse_b_str_fn(val, Cmd::Set),
                         "sub" | "-" => parse_bin_fn(val, Cmd::Sub),
-                        "key" => match val {
-                            Json::String(s) => Ok(Cmd::Key(s)),
-                            _ => Err(Error::BadKey),
-                        },
+                        "sum" => parse_unr_fn(val, Cmd::Sum),
+                        "str" => parse_unr_fn(val, Cmd::ToString),  
+                        "unique" => parse_unr_fn(val, Cmd::Unique),
+                        "var" => parse_unr_fn(val, Cmd::Var),                    
                         _ => Ok(Cmd::Json(Json::Object(obj))),
                     }
                 } else {
                     Ok(Cmd::Json(Json::from(obj)))
                 }
             }
+            Json::String(s) => Ok(if s == "len" { Cmd::Len } else if s == "summary" {Cmd::Summary} else { Cmd::Json(Json::from(s)) }),
             val => Ok(Cmd::Json(val)),
         }
     }

@@ -156,17 +156,32 @@ pub fn json_append(val: &mut Json, elem: Json) {
     }
 }
 
-pub fn json_first(val: &Json) -> &Json {
+pub fn json_first(val: &Json) -> Json {
     match val {
-        Json::Array(ref arr) if !arr.is_empty() => &arr[0],
-        val => val,
+        Json::Array(ref arr) if !arr.is_empty() => arr[0].clone(),
+        Json::String(s) => {
+            let mut it = s.chars();
+            match it.next() {
+                Some(c) => Json::from(c.to_string()),
+                None => Json::Null,
+            }
+        }
+        val => val.clone(),
     }
 }
 
-pub fn json_last(val: &Json) -> &Json {
+pub fn json_last(val: &Json) -> Json {
     match val {
-        Json::Array(ref arr) if !arr.is_empty() => &arr[arr.len() - 1],
-        val => val,
+        Json::Array(ref arr) if !arr.is_empty() => arr[arr.len()-1].clone(),
+        Json::String(s) => {
+            let mut it = s.chars();
+            let mut last = None;
+            while let Some(c) = it.next() {
+                last = Some(c);
+            }
+            last.map(|x| Json::String(x.to_string())).unwrap_or(Json::Null)
+        }
+        val => val.clone(),
     }
 }
 
@@ -199,7 +214,7 @@ pub fn json_avg(val: &Json) -> Result<Json, Error> {
 
 pub fn json_var(val: &Json) -> Result<Json, Error> {
     match val {
-        Json::Number(val) => Ok(Json::Number(val.clone())),
+        Json::Number(_) => Ok(Json::from(0)),
         Json::Array(ref arr) => json_arr_var(arr),
         _ => Err(Error::BadType),
     }
@@ -207,8 +222,8 @@ pub fn json_var(val: &Json) -> Result<Json, Error> {
 
 pub fn json_dev(val: &Json) -> Result<Json, Error> {
     match val {
-        Json::Number(val) => Ok(Json::Number(val.clone())),
-        Json::Array(ref arr) => json_arr_dev(arr),
+        Json::Number(_) => Ok(Json::from(0)),
+        Json::Array(ref arr) => if arr.len() < 2 {Ok(Json::from(0)) } else {json_arr_dev(arr)},
         _ => Err(Error::BadType),
     }
 }
@@ -224,12 +239,11 @@ pub fn json_max(val: &Json) -> &Json {
 pub fn json_add(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
         (Json::Array(lhs), Json::Array(rhs)) => json_add_arrs(lhs, rhs),
-        (Json::Array(lhs), Json::Number(rhs)) => json_add_arr_num(lhs, rhs),
-        (Json::Number(rhs), Json::Array(lhs)) => json_add_arr_num(lhs, rhs),
+        (Json::Array(lhs), rhs) => json_add_arr_val(lhs, rhs),
+        (lhs, Json::Array(rhs)) => json_add_val_arr(lhs, rhs),
         (Json::Number(lhs), Json::Number(rhs)) => Ok(Json::Number(json_add_nums(lhs, rhs))),
-        (Json::String(lhs), Json::String(rhs)) => json_add_str(lhs, rhs),
-        (Json::String(lhs), Json::Array(rhs)) => add_str_arr(lhs, rhs),
-        (Json::Array(lhs), Json::String(rhs)) => add_arr_str(lhs, rhs),
+        (Json::String(lhs), rhs) => json_add_str(lhs, json_tostring(rhs)),
+        (lhs, Json::String(rhs)) => json_add_str(json_tostring(lhs), rhs),
         _ => Err(Error::BadType),
     }
 }
@@ -272,9 +286,9 @@ fn json_bar_num_num(lhs: &Number, rhs: &Number) -> Result<Json, Error> {
 pub fn json_sub(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
         (Json::Array(lhs), Json::Array(rhs)) => json_sub_arrs(lhs, rhs),
-        (Json::Array(lhs), Json::Number(rhs)) => json_sub_arr_num(lhs, rhs),
-        (Json::Number(lhs), Json::Array(rhs)) => json_sub_num_arr(lhs, rhs),
-        (Json::Number(lhs), Json::Number(rhs)) => json_sub_nums(lhs, rhs),
+        (Json::Array(lhs), rhs) => json_sub_arr_num(lhs, rhs),
+        (lhs, Json::Array(rhs)) => json_sub_num_arr(lhs, rhs),
+        (Json::Number(lhs), Json::Number(rhs)) => Ok(json_sub_nums(lhs, rhs)),
         _ => Err(Error::BadType),
     }
 }
@@ -399,47 +413,25 @@ fn div_num_val(x: &JsonNum, y: &Json) -> Result<Json, Error> {
     }
 }
 
-fn json_add_str(x: &str, y: &str) -> Result<Json, Error> {
-    let val = x.to_string() + y;
+fn json_add_str<X, Y>(x: X, y: Y) -> Result<Json, Error> where X:Into<String>, Y:Into<String> {
+    let val = x.into() + &y.into();
     Ok(Json::String(val))
 }
 
-fn add_str_arr(x: &str, y: &[Json]) -> Result<Json, Error> {
-    let mut arr = Vec::with_capacity(y.len());
-    for e in y {
-        arr.push(add_str_val(x, e)?);
-    }
-    Ok(Json::Array(arr))
-}
-
-fn add_str_val(x: &str, y: &Json) -> Result<Json, Error> {
-    match y {
-        Json::String(y) => Ok(Json::from(x.to_string() + y)),
-        _ => Err(Error::BadType),
-    }
-}
-
-fn add_val_str(x: &Json, y: &str) -> Result<Json, Error> {
-    match x {
-        Json::String(x) => Ok(Json::from(x.to_string() + y)),
-        _ => Err(Error::BadType),
-    }
-}
-
-fn add_arr_str(lhs: &[Json], rhs: &str) -> Result<Json, Error> {
-    let mut arr = Vec::with_capacity(lhs.len());
-    for x in lhs {
-        arr.push(add_val_str(x, rhs)?);
-    }
-    Ok(Json::Array(arr))
-}
-
 //TODO(jaupe) add better error handlinge
-fn json_add_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error> {
-    let arr: Vec<Json> = x
-        .iter()
-        .map(|x| Json::from(x.as_f64().unwrap() + y.as_f64().unwrap()))
-        .collect();
+fn json_add_arr_val(x: &[Json], y: &Json) -> Result<Json, Error> {
+    let mut arr = Vec::new(); 
+    for x in x {
+        arr.push(json_add(x, y)?);
+    }
+    Ok(Json::Array(arr))
+}
+
+fn json_add_val_arr(x: &Json, y: &[Json]) -> Result<Json, Error> {
+    let mut arr = Vec::new(); 
+    for y in y {
+        arr.push(json_add(x, y)?);
+    }
     Ok(Json::Array(arr))
 }
 
@@ -459,18 +451,18 @@ pub(crate) fn json_add_nums(x: &JsonNum, y: &JsonNum) -> JsonNum {
     }
 }
 
-fn json_sub_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error> {
+fn json_sub_arr_num(x: &[Json], y: &Json) -> Result<Json, Error> {
     let arr = x
         .iter()
-        .map(|x| Json::from(x.as_f64().unwrap() - y.as_f64().unwrap()))
+        .map(|x| json_sub(x, y).unwrap())
         .collect();
     Ok(Json::Array(arr))
 }
 
-fn json_sub_num_arr(x: &JsonNum, y: &[Json]) -> Result<Json, Error> {
+fn json_sub_num_arr(x: &Json, y: &[Json]) -> Result<Json, Error> {
     let arr = y
-        .iter()
-        .map(|y| Json::from(x.as_f64().unwrap() - y.as_f64().unwrap()))
+        .iter()        
+        .map(|y| json_sub(x, y).unwrap()) //TODO remove unwrap and handle error
         .collect();
     Ok(Json::Array(arr))
 }
@@ -484,9 +476,13 @@ fn json_sub_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
     Ok(Json::Array(vec))
 }
 
-fn json_sub_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
-    let val = x.as_f64().unwrap() - y.as_f64().unwrap();
-    Ok(Json::from(val))
+fn json_sub_nums(x: &JsonNum, y: &JsonNum) -> Json {
+    match (x.as_i64(), y.as_i64()) {
+        (Some(x), Some(y)) => Json::from(x - y),
+        (Some(x), None) => Json::from(x as f64 - y.as_f64().unwrap()),
+        (None, Some(y)) => Json::from(x.as_f64().unwrap() - y as f64),
+        (None, None) => Json::from(x.as_f64().unwrap() - y.as_f64().unwrap()),
+    }
 }
 
 pub fn json_min(val: &Json) -> &Json {
@@ -565,7 +561,15 @@ fn json_arr_dev(s: &[Json]) -> Result<Json, Error> {
 
 pub fn json_f64(val: &Json) -> Option<f64> {
     match val {
-        Json::Number(num) => num.as_f64(),
+        Json::Number(num) => {
+            if let Some(x) = num.as_f64() {
+                Some(x)
+            } else if let Some(x) = num.as_i64() {
+                Some(x as f64)
+            } else {
+                None
+            }
+        },
         _ => None,
     }
 }

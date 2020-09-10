@@ -1,37 +1,53 @@
 use crate::cmd::Cmd;
 use crate::err::Error;
-use crate::json::{json_count, json_get, json_sum, JsonObj};
-use crate::json::{json_first, json_last, json_max, json_min, Json};
+use crate::json::*;
+
+fn eval_keyed_bin_cmd<F>(lhs: &Box<Cmd>, rhs: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error> where F:FnOnce(&Json, &Json) -> Result<Json,Error> {
+    let x = eval_keyed_cmd(lhs.as_ref(), val)?;
+    let y = eval_keyed_cmd(rhs.as_ref(), val)?;
+    f(&x, &y)
+}
+
+fn eval_keyed_unr_cmd<F>(arg: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error> where F:FnOnce(&Json) -> Result<Json,Error> {
+    let val = eval_keyed_cmd(arg.as_ref(), val)?;
+    f(&val)
+}
 
 pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
-    match cmd {
-        Cmd::Count(arg) => {
+    match cmd {        
+        Cmd::Add(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_add),
+        Cmd::Append(_, _) => Err(Error::BadCmd),
+        Cmd::Avg(arg) => eval_keyed_unr_cmd(arg, val, json_avg),
+        Cmd::Bar(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_bar),
+        Cmd::Count(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_count(x))),
+        Cmd::Delete(_) => Err(Error::BadCmd),
+
+        Cmd::Div(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_div),
+        Cmd::First(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_first(x).clone())),
+        Cmd::Get( key, arg) => {
             let val = eval_keyed_cmd(arg.as_ref(), val)?;
-            Ok(json_count(&val))
+            json_get(key, &val).ok_or(Error::BadKey)
         }
-        Cmd::Key(ref key) => json_get(key, val).ok_or(
-            Error::BadKey),
-        Cmd::Sum(arg) => {
-            let val = eval_keyed_cmd(arg.as_ref(), val)?;
-            Ok(json_sum(&val))
-        }
-        Cmd::Min(arg) => {
-            let val = eval_keyed_cmd(arg.as_ref(), val)?;
-            Ok(json_min(&val).clone())
-        }
-        Cmd::Max(arg) => {
-            let val = eval_keyed_cmd(arg.as_ref(), val)?;
-            Ok(json_max(&val).clone())
-        }
-        Cmd::First(arg) => {
-            let val = eval_keyed_cmd(arg.as_ref(), val)?;
-            Ok(json_first(&val).clone())
-        }
-        Cmd::Last(arg) => {
-            let val = eval_keyed_cmd(arg.as_ref(), val)?;
-            Ok(json_last(&val).clone())
-        }
-        _ => unimplemented!(),
+        Cmd::Insert(_, _) => Err(Error::BadCmd),
+        Cmd::Json(val) => Ok(val.clone()),
+        Cmd::Key(key) => json_get(key, val).ok_or(Error::BadKey),
+        Cmd::Keys(_) => Err(Error::BadCmd),
+        Cmd::Last(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_last(x).clone())),
+        Cmd::Len => Ok(json_count(val)),
+        Cmd::Max(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_max(x).clone())),
+        Cmd::Min(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_min(x).clone())),
+        Cmd::Mul(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_mul),
+        Cmd::Pop(_) => Err(Error::BadCmd),
+        Cmd::Push(_, _) => Err(Error::BadCmd),
+        Cmd::Query(_) => Err(Error::BadCmd),
+        Cmd::Set(_, _) => Err(Error::BadCmd),
+        Cmd::StdDev(arg) => eval_keyed_unr_cmd(arg, val, json_dev),
+        Cmd::Sub(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_sub),
+        Cmd::Sum(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_sum(x))),
+        Cmd::Summary => Err(Error::BadCmd),
+        Cmd::ToString(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(Json::from(json_tostring(x)))),
+        Cmd::Unique(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_unique(x))),
+        Cmd::Var(arg) => eval_keyed_unr_cmd(arg, val, json_var)
     }
 }
 
@@ -83,11 +99,7 @@ mod tests {
     #[test]
     fn keyed_count_aggregate() {
         use serde_json::json;
-        let data = json!({
-            "\"james\"": [{"age": 20},{"age": 21},{"age": 22},{"age": 35}],
-            "\"ania\"": [{"age": 20},{"age": 21}],
-            "\"misha\"": [{"age": 9}]
-        });
+        let data = data();
         let data = obj(data);
         let name = "total".to_string();
         let output = keyed_reduce(&data, &[(&name, &count("age"))]).unwrap();

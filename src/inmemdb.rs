@@ -12,8 +12,6 @@ pub struct InMemDb {
     cache: Map<String, Json>,
 }
 
-
-
 impl InMemDb {
     fn eval_read_bin_cmd<F>(&self, lhs: Box<Cmd>, rhs: Box<Cmd>, f: F) -> Result<Json, Error> where F:FnOnce(&Json, &Json) -> Result<Json, Error> {
         let x = self.eval_read(*lhs)?;
@@ -41,7 +39,7 @@ impl InMemDb {
                 json_get(&key, &val).ok_or(Error::BadKey)
             }
             Cmd::Json(val) => Ok(val), 
-            Cmd::Key(key) => self.key(&key),
+            Cmd::Key(key) => self.eval_key(&key),
             Cmd::Keys(_) => Ok(self.keys()),
             Cmd::Last(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_last(x).clone())),
             Cmd::Len => Ok(Json::from(self.cache.len())),
@@ -63,7 +61,7 @@ impl InMemDb {
     }
 
     fn key(&self, key: &str) -> Result<Json, Error> {
-        self.get_ref(key).map(|x| x.clone())
+        self.cache.get(key).cloned().ok_or(Error::BadKey)        
     }
 
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
@@ -78,7 +76,7 @@ impl InMemDb {
             Cmd::Count(arg) => self.eval_unr_fn(*arg, &count),
             Cmd::Delete(key) => self.delete(&key),
             Cmd::Div(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, &json_div),
-            Cmd::First(arg) => self.eval_unr_fn_ref(*arg, &json_first),
+            Cmd::First(arg) => self.eval_unr_fn(*arg, &|x| Ok(json_first(x))),
             Cmd::Get(key, arg) => {
                 let val = self.eval(*arg)?;
                 Ok(json_get(&key, &val).unwrap_or(Json::Null))
@@ -91,7 +89,7 @@ impl InMemDb {
             }
             Cmd::Json(val) => Ok(val),
             Cmd::Keys(_page) => Ok(self.keys()),
-            Cmd::Last(arg) => self.eval_unr_fn_ref(*arg, &json_last),
+            Cmd::Last(arg) => self.eval_unr_fn(*arg, &|x| Ok(json_last(x))),
             Cmd::Len => Ok(Json::from(self.len())),
             Cmd::Max(arg) => self.eval_unr_fn_ref(*arg, &json_max),
             Cmd::Min(arg) => self.eval_unr_fn_ref(*arg, &json_min),
@@ -118,20 +116,22 @@ impl InMemDb {
                 let val = self.eval(*arg)?;
                 Ok(json_string(&val))
             }
-            Cmd::Key(key) => {
-                let mut it = key.split('.');
-                let key = it.next().ok_or(Error::BadKey)?;
-                let mut val = self.key(key)?;
-                while let Some(key) = it.next() {
-                    if let Some(v) = json_get(key, &val) {
-                        val = v;
-                    } else {
-                        return Err(Error::BadKey);
-                    }
-                }
-                Ok(val)
-            }
+            Cmd::Key(key) => self.eval_key(&key),
         }
+    }
+
+    pub fn eval_key(&self, key: &str) -> Result<Json, Error> {
+        let mut it = key.split('.');
+        let key = it.next().ok_or(Error::BadKey)?;
+        let mut val = self.key(key)?;
+        while let Some(key) = it.next() {
+        if let Some(v) = json_get(key, &val) {
+            val = v;
+        } else {
+            return Err(Error::BadKey);
+        }
+        }
+        Ok(val)
     }
 
     pub fn new() -> Self {
@@ -287,8 +287,9 @@ impl<'a> Query<'a> {
 
     fn eval_by(&self, from: &Json) -> Result<Option<Vec<Json>>, Error> {
         //TODO remove cloning
-        let val: Json = if let Some(cmd)  = self.cmd.by.as_ref() {
-            eval_keyed_cmd(cmd, from)?
+        let val: Json = if let Some(by)  = self.cmd.by.as_ref() {
+            let cmd = Cmd::parse(by.clone())?;
+            eval_keyed_cmd(&cmd, from)?
         } else{
             return Ok(None);
         };
