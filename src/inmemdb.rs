@@ -24,6 +24,13 @@ impl InMemDb {
         f(&val)
     }    
 
+    fn eval_sort_cmd(&self, arg: Box<Cmd>) -> Result<Json, Error> {
+        let mut val = self.eval_read(*arg)?;
+        json_sort(&mut val);
+        Ok(val)
+    }    
+
+
     pub fn eval_read(&self, cmd: Cmd) -> Result<Json, Error> {
         println!("{:?}", cmd);
         match cmd {
@@ -31,7 +38,7 @@ impl InMemDb {
             Cmd::Add(lhs, rhs) => self.eval_read_bin_cmd(lhs,rhs, json_add),
             Cmd::Avg(arg) => self.eval_read_unr_cmd(arg, json_avg),
             Cmd::Bar(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_bar),
-            Cmd::Count(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_count(x))),
+            Cmd::Len(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_count(x))),
             Cmd::Div(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_div),
             Cmd::First(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_first(x).clone())),
             Cmd::Get(key, arg) => {
@@ -40,23 +47,41 @@ impl InMemDb {
             }
             Cmd::Json(val) => Ok(val), 
             Cmd::Key(key) => self.eval_key(&key),
-            Cmd::Keys(_) => Ok(self.keys()),
+            //Cmd::Keys(_) => Ok(self.keys()),
             Cmd::Last(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_last(x).clone())),
-            Cmd::Len => Ok(Json::from(self.cache.len())),
             Cmd::Max(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_max(x).clone())),
             Cmd::Min(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_min(x).clone())),
             Cmd::Mul(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_mul),
             Cmd::StdDev(arg) => self.eval_read_unr_cmd(arg, json_dev),
             Cmd::Sub(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_sub),
             Cmd::Sum(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_sum(x))),
-            Cmd::Summary => Ok(self.summary()),
+            //Cmd::Summary => Ok(self.summary()),
+            Cmd::Sort(arg) => self.eval_sort_cmd(arg),
             Cmd::ToString(arg) => self.eval_read_unr_cmd(arg, |x| Ok(Json::from(json_tostring(x)))),
             Cmd::Unique(arg) =>  self.eval_read_unr_cmd(arg, |x| Ok(json_unique(x))),
             Cmd::Var(arg) => self.eval_read_unr_cmd(arg, json_var),
             Cmd::Query(cmd) => {
                 let query = Query::from(self, cmd);
                 query.exec()
-            }            
+            }    
+            Cmd::Reverse(arg) => {
+                let mut val = self.eval_read(*arg)?;
+                json_reverse(&mut val);
+                Ok(val)
+            }   
+            Cmd::GroupBy(key, arg) => {
+                let mut val = self.eval_read(*arg)?;
+                let val = json_groupby(key.as_ref(), &val);
+                Ok(val.unwrap_or(Json::Null))
+            }   
+            Cmd::Median(arg) => {
+                let val = self.eval_read(*arg)?;
+                unimplemented!()
+            }  
+            Cmd::Keys(_) => {
+                unimplemented!()
+            }
+            Cmd::Summary => Ok(self.summary()),
         }
     }
 
@@ -65,18 +90,19 @@ impl InMemDb {
     }
 
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
+
         match cmd {
-            Cmd::Add(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, &json_add),
+            Cmd::Add(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_add),
             Cmd::Append(key, arg) => {
                 let val = self.eval(*arg)?;
                 self.append(key, val)
             }
-            Cmd::Avg(arg) => self.eval_unr_fn(*arg, &json_avg),
-            Cmd::Bar(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, &json_bar),
-            Cmd::Count(arg) => self.eval_unr_fn(*arg, &count),
+            Cmd::Avg(arg) => self.eval_unr_fn(*arg, json_avg),
+            Cmd::Bar(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_bar),
+            Cmd::Len(arg) => self.eval_unr_fn(*arg, &count),
             Cmd::Delete(key) => self.delete(&key),
-            Cmd::Div(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, &json_div),
-            Cmd::First(arg) => self.eval_unr_fn(*arg, &|x| Ok(json_first(x))),
+            Cmd::Div(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_div),
+            Cmd::First(arg) => self.eval_unr_fn(*arg, |x| Ok(json_first(x))),
             Cmd::Get(key, arg) => {
                 let val = self.eval(*arg)?;
                 Ok(json_get(&key, &val).unwrap_or(Json::Null))
@@ -89,11 +115,10 @@ impl InMemDb {
             }
             Cmd::Json(val) => Ok(val),
             Cmd::Keys(_page) => Ok(self.keys()),
-            Cmd::Last(arg) => self.eval_unr_fn(*arg, &|x| Ok(json_last(x))),
-            Cmd::Len => Ok(Json::from(self.len())),
-            Cmd::Max(arg) => self.eval_unr_fn_ref(*arg, &json_max),
-            Cmd::Min(arg) => self.eval_unr_fn_ref(*arg, &json_min),
-            Cmd::Mul(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, &json_mul),
+            Cmd::Last(arg) => self.eval_unr_fn(*arg, |x| Ok(json_last(x))),
+            Cmd::Max(arg) => self.eval_unr_fn_ref(*arg, json_max),
+            Cmd::Min(arg) => self.eval_unr_fn_ref(*arg, json_min),
+            Cmd::Mul(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_mul),
             Cmd::Push(key, arg) => {
                 let val = self.eval(*arg)?;
                 let kv = self.cache.get_mut(&key).ok_or(Error::BadKey)?;
@@ -106,17 +131,19 @@ impl InMemDb {
                 let val = self.eval(*arg)?;
                 Ok(self.set(key, val).unwrap_or(Json::Null))
             }
-            Cmd::StdDev(arg) => self.eval_unr_fn(*arg, &json_dev),
-            Cmd::Sub(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, &json_sub),
-            Cmd::Sum(arg) => self.eval_unr_fn(*arg, &|x| Ok(json_sum(x))),
+            Cmd::Sort(arg) => self.eval_sort_cmd(arg),
+            Cmd::StdDev(arg) => self.eval_unr_fn(*arg, json_dev),
+            Cmd::Sub(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_sub),
+            Cmd::Sum(arg) => self.eval_unr_fn(*arg, |x| Ok(json_sum(x))),
             Cmd::Summary => Ok(self.summary()),
-            Cmd::Unique(arg) => self.eval_unr_fn(*arg, &unique),
-            Cmd::Var(arg) => self.eval_unr_fn(*arg, &json_var),
+            Cmd::Unique(arg) => self.eval_unr_fn(*arg, unique),
+            Cmd::Var(arg) => self.eval_unr_fn(*arg, json_var),
             Cmd::ToString(arg) => {
                 let val = self.eval(*arg)?;
                 Ok(json_string(&val))
             }
             Cmd::Key(key) => self.eval_key(&key),
+            _ => unimplemented!(),
         }
     }
 
@@ -201,27 +228,34 @@ impl InMemDb {
         Ok(Json::Null)
     }
 
-    fn eval_bin_fn(
+    fn eval_bin_fn<F>(
         &mut self,
         lhs: Cmd,
         rhs: Cmd,
-        f: &dyn Fn(&Json, &Json) -> Result<Json, Error>,
-    ) -> Result<Json, Error> {
+        f: F,
+    ) -> Result<Json, Error> where F:Fn(&Json, &Json) -> Result<Json, Error> {
         let lhs = self.eval(lhs)?;
         let rhs = self.eval(rhs)?;
         f(&lhs, &rhs)
     }
 
-    fn eval_unr_fn(
+    fn eval_unr_val_fn<F>(
         &mut self,
         arg: Cmd,
-        f: &dyn Fn(&Json) -> Result<Json, Error>,
-    ) -> Result<Json, Error> {
+        f: F) -> Result<Json, Error> where F:Fn(Json) -> Json {
+        let val = self.eval(arg)?;
+        Ok(f(val))
+    }
+
+    fn eval_unr_fn<F>(
+        &mut self,
+        arg: Cmd,
+        f: F) -> Result<Json, Error> where F:Fn(&Json) -> Result<Json, Error> {
         let val = self.eval(arg)?;
         f(&val)
     }
 
-    fn eval_unr_fn_ref(&mut self, arg: Cmd, f: &dyn Fn(&Json) -> &Json) -> Result<Json, Error> {
+    fn eval_unr_fn_ref<F>(&mut self, arg: Cmd, f: F) -> Result<Json, Error> where F:Fn(&Json) -> &Json{
         let val = self.eval(arg)?;
         Ok(f(&val).clone())
     }
@@ -443,7 +477,7 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::First(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_first(&x).clone()),
         Cmd::Last(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_last(&x).clone()),
         Cmd::Sum(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_sum(&x)),
-        Cmd::Count(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_count(&x)),
+        Cmd::Len(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_count(&x)),
         Cmd::Min(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_min(&x).clone()),
         Cmd::Max(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_max(&x).clone()),
         Cmd::Avg(arg) => {
@@ -482,11 +516,14 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::Insert(_, _) => None,
         Cmd::Push(_, _) => None,
         Cmd::Keys(_) => None,
-        Cmd::Len => Some(Json::from(rows.len())),
         Cmd::Summary => None,
         Cmd::ToString(arg) => {
             eval_reduce_cmd(arg.as_ref(), rows).map(|x| Json::String(x.to_string()))
         }
+        Cmd::Sort(_) => unimplemented!(),
+        Cmd::Median(_) => unimplemented!(),
+        Cmd::GroupBy(_, _) => unimplemented!(),
+        Cmd::Reverse(_) => unimplemented!(),
     }
 }
 
@@ -705,8 +742,8 @@ mod tests {
 
     #[test]
     fn test_var() {
-        assert_eq!(Ok(Json::from(3.3)), eval(var(key("f"))));
-        assert_eq!(Ok(Json::from(2)), eval(var(key("i"))));
+        assert_eq!(Ok(Json::from(0)), eval(var(key("f"))));
+        assert_eq!(Ok(Json::from(0)), eval(var(key("i"))));
         let val = eval(var(key("fa"))).unwrap().as_f64().unwrap();
         assert_approx_eq!(3.10, val, 0.0249f64);
         let val = eval(var(key("ia"))).unwrap().as_f64().unwrap();
@@ -715,8 +752,8 @@ mod tests {
 
     #[test]
     fn test_dev() {
-        assert_eq!(Ok(Json::from(3.3)), eval(dev(key("f"))));
-        assert_eq!(Ok(Json::from(2)), eval(dev(key("i"))));
+        assert_eq!(Ok(Json::from(0)), eval(dev(key("f"))));
+        assert_eq!(Ok(Json::from(0)), eval(dev(key("i"))));
         let val = eval(dev(key("fa"))).unwrap().as_f64().unwrap();
         assert_approx_eq!(1.55, val, 0.03f64);
         let val = eval(dev(key("ia"))).unwrap().as_f64().unwrap();
@@ -728,22 +765,22 @@ mod tests {
         assert_eq!(Ok(Json::from(9)), eval(add(key("x"), key("y"))));
         assert_eq!(
             Ok(Json::from(vec![
-                Json::from(5.0),
-                Json::from(6.0),
-                Json::from(7.0),
-                Json::from(8.0),
-                Json::from(9.0),
+                Json::from(5),
+                Json::from(6),
+                Json::from(7),
+                Json::from(8),
+                Json::from(9),
             ])),
             eval(add(key("x"), key("ia")))
         );
 
         assert_eq!(
             Ok(Json::from(vec![
-                Json::from(3.0),
-                Json::from(4.0),
-                Json::from(5.0),
-                Json::from(6.0),
-                Json::from(7.0),
+                Json::from(3),
+                Json::from(4),
+                Json::from(5),
+                Json::from(6),
+                Json::from(7),
             ])),
             eval(add(key("ia"), key("i")))
         );
@@ -768,45 +805,45 @@ mod tests {
         );
 
         assert_eq!(Ok(Json::from("hellohello")), eval(add(key("s"), key("s"))));
-        assert_eq!(bad_type(), eval(add(key("s"), key("f"))));
-        assert_eq!(bad_type(), eval(add(key("f"), key("s"))));
-        assert_eq!(bad_type(), eval(add(key("i"), key("s"))));
-        assert_eq!(bad_type(), eval(add(key("s"), key("i"))));
+        assert_eq!(Ok(json!("hello3.3")), eval(add(key("s"), key("f"))));
+        assert_eq!(Ok(json!("3.3hello")), eval(add(key("f"), key("s"))));
+        assert_eq!(Ok(json!("2hello")), eval(add(key("i"), key("s"))));
+        assert_eq!(Ok(json!("hello2")), eval(add(key("s"), key("i"))));
     }
 
     #[test]
     fn test_sub() {
-        assert_eq!(Ok(Json::from(-1.0)), eval(sub(key("x"), key("y"))));
-        assert_eq!(Ok(Json::from(1.0)), eval(sub(key("y"), key("x"))));
+        assert_eq!(Ok(Json::from(-1)), eval(sub(key("x"), key("y"))));
+        assert_eq!(Ok(Json::from(1)), eval(sub(key("y"), key("x"))));
         assert_eq!(
             Ok(Json::from(vec![
-                Json::from(3.0),
-                Json::from(2.0),
-                Json::from(1.0),
-                Json::from(0.0),
-                Json::from(-1.0),
+                Json::from(3),
+                Json::from(2),
+                Json::from(1),
+                Json::from(0),
+                Json::from(-1),
             ])),
             eval(sub(key("x"), key("ia")))
         );
 
         assert_eq!(
             Ok(Json::from(vec![
-                Json::from(-4.0),
-                Json::from(-3.0),
-                Json::from(-2.0),
-                Json::from(-1.0),
-                Json::from(0.0),
+                Json::from(-4),
+                Json::from(-3),
+                Json::from(-2),
+                Json::from(-1),
+                Json::from(0),
             ])),
             eval(sub(key("ia"), key("y")))
         );
 
         assert_eq!(
             Ok(Json::from(vec![
-                Json::from(0.0),
-                Json::from(0.0),
-                Json::from(0.0),
-                Json::from(0.0),
-                Json::from(0.0),
+                Json::from(0),
+                Json::from(0),
+                Json::from(0),
+                Json::from(0),
+                Json::from(0),
             ])),
             eval(sub(key("ia"), key("ia")))
         );
@@ -820,24 +857,24 @@ mod tests {
 
     #[test]
     fn json_mul() {
-        assert_eq!(Ok(Json::from(20.0)), eval(mul(key("x"), key("y"))));
-        assert_eq!(Ok(Json::from(16.0)), eval(mul(key("x"), key("x"))));
+        assert_eq!(Ok(Json::from(20)), eval(mul(key("x"), key("y"))));
+        assert_eq!(Ok(Json::from(16)), eval(mul(key("x"), key("x"))));
         let arr = vec![
-            Json::from(5.0),
-            Json::from(10.0),
-            Json::from(15.0),
-            Json::from(20.0),
-            Json::from(25.0),
+            Json::from(5),
+            Json::from(10),
+            Json::from(15),
+            Json::from(20),
+            Json::from(25),
         ];
         assert_eq!(Ok(Json::from(arr.clone())), eval(mul(key("ia"), key("y"))));
         assert_eq!(Ok(Json::from(arr)), eval(mul(key("y"), key("ia"))));
         assert_eq!(
             Ok(Json::from(vec![
-                Json::from(1.0),
-                Json::from(4.0),
-                Json::from(9.0),
-                Json::from(16.0),
-                Json::from(25.0),
+                Json::from(1),
+                Json::from(4),
+                Json::from(9),
+                Json::from(16),
+                Json::from(25),
             ])),
             eval(mul(key("ia"), key("ia")))
         );
@@ -1343,7 +1380,7 @@ mod tests {
     fn select_count_age_by_name() {
         let qry = query(json!({
             "select": {
-                "age": {"count": {"key": "age"}},
+                "age": {"len": {"key": "age"}},
             },
             "from": "t",
             "by": {"key": "name"},
@@ -1497,7 +1534,7 @@ mod tests {
             "select": {
                 "maxAge": {"max": {"key": "age"}},
                 "minAge": {"min": {"key": "age"}},
-                "countAge": {"count": {"key": "age"}},
+                "countAge": {"len": {"key": "age"}},
             },
             "from": "t",
             "by": {"key": "name"},
@@ -1514,24 +1551,24 @@ mod tests {
 
     #[test]
     fn eval_mul() {
-        assert_eq!(Ok(Json::from(20.0)), eval(mul(key("x"), key("y"))));
-        assert_eq!(Ok(Json::from(16.0)), eval(mul(key("x"), key("x"))));
+        assert_eq!(Ok(Json::from(20)), eval(mul(key("x"), key("y"))));
+        assert_eq!(Ok(Json::from(16)), eval(mul(key("x"), key("x"))));
         let arr = vec![
-            Json::from(5.0),
-            Json::from(10.0),
-            Json::from(15.0),
-            Json::from(20.0),
-            Json::from(25.0),
+            Json::from(5),
+            Json::from(10),
+            Json::from(15),
+            Json::from(20),
+            Json::from(25),
         ];
         assert_eq!(Ok(Json::from(arr.clone())), eval(mul(key("ia"), key("y"))));
         assert_eq!(Ok(Json::from(arr)), eval(mul(key("y"), key("ia"))));
         assert_eq!(
             Ok(Json::from(vec![
-                Json::from(1.0),
-                Json::from(4.0),
-                Json::from(9.0),
-                Json::from(16.0),
-                Json::from(25.0),
+                Json::from(1),
+                Json::from(4),
+                Json::from(9),
+                Json::from(16),
+                Json::from(25),
             ])),
             eval(mul(key("ia"), key("ia")))
         );

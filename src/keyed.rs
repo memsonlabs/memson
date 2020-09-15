@@ -19,7 +19,7 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Append(_, _) => Err(Error::BadCmd),
         Cmd::Avg(arg) => eval_keyed_unr_cmd(arg, val, json_avg),
         Cmd::Bar(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_bar),
-        Cmd::Count(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_count(x))),
+        Cmd::Len(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_count(x))),
         Cmd::Delete(_) => Err(Error::BadCmd),
 
         Cmd::Div(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_div),
@@ -33,7 +33,6 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Key(key) => json_get(key, val).ok_or(Error::BadKey),
         Cmd::Keys(_) => Err(Error::BadCmd),
         Cmd::Last(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_last(x).clone())),
-        Cmd::Len => Ok(json_count(val)),
         Cmd::Max(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_max(x).clone())),
         Cmd::Min(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_min(x).clone())),
         Cmd::Mul(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_mul),
@@ -47,7 +46,11 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Summary => Err(Error::BadCmd),
         Cmd::ToString(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(Json::from(json_tostring(x)))),
         Cmd::Unique(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_unique(x))),
-        Cmd::Var(arg) => eval_keyed_unr_cmd(arg, val, json_var)
+        Cmd::Var(arg) => eval_keyed_unr_cmd(arg, val, json_var),
+        Cmd::Sort(_) => unimplemented!(),
+        Cmd::Reverse(_) => unimplemented!(),
+        Cmd::GroupBy(_, _) => unimplemented!(),
+        Cmd::Median(_) => unimplemented!(),
     }
 }
 
@@ -77,8 +80,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn count(key: &str) -> Cmd {
-        Cmd::Count(Box::new(Cmd::Key(key.to_string())))
+    fn len(key: &str) -> Cmd {
+        Cmd::Len(Box::new(Cmd::Key(key.to_string())))
     }
 
     fn max(key: &str) -> Cmd {
@@ -97,12 +100,12 @@ mod tests {
     }
 
     #[test]
-    fn keyed_count_aggregate() {
+    fn keyed_len_aggregate() {
         use serde_json::json;
         let data = data();
         let data = obj(data);
         let name = "total".to_string();
-        let output = keyed_reduce(&data, &[(&name, &count("age"))]).unwrap();
+        let output = keyed_reduce(&data, &[(&name, &len("age"))]).unwrap();
 
         assert_eq!(
             json!({

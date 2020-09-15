@@ -3,7 +3,7 @@ use crate::err::Error;
 pub use serde_json::{json, Map};
 
 use serde_json::Number;
-use std::cmp::PartialOrd;
+use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
 pub type Json = serde_json::Value;
@@ -84,6 +84,16 @@ pub fn json_neq(x: &Json, y: &Json) -> bool {
     x != y
 }
 
+fn json_cmp2(x: &Json, y: &Json) -> Ordering {
+    if x == y {
+        Ordering::Equal
+    } else if json_gt(x, y) {
+        Ordering::Greater
+    } else {
+        Ordering::Less
+    }
+}
+
 fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> bool {
     match (x, y) {
         (Json::String(x), Json::String(y)) => {
@@ -127,6 +137,7 @@ pub fn json_lte(x: &Json, y: &Json) -> bool {
 pub fn json_count(val: &Json) -> Json {
     match val {
         Json::Array(ref arr) => Json::from(arr.len()),
+        Json::Object(ref obj) => Json::from(obj.len()),
         _ => Json::from(1),
     }
 }
@@ -172,14 +183,15 @@ pub fn json_first(val: &Json) -> Json {
 
 pub fn json_last(val: &Json) -> Json {
     match val {
-        Json::Array(ref arr) if !arr.is_empty() => arr[arr.len()-1].clone(),
+        Json::Array(ref arr) if !arr.is_empty() => arr[arr.len() - 1].clone(),
         Json::String(s) => {
             let mut it = s.chars();
             let mut last = None;
             while let Some(c) = it.next() {
                 last = Some(c);
             }
-            last.map(|x| Json::String(x.to_string())).unwrap_or(Json::Null)
+            last.map(|x| Json::String(x.to_string()))
+                .unwrap_or(Json::Null)
         }
         val => val.clone(),
     }
@@ -223,7 +235,13 @@ pub fn json_var(val: &Json) -> Result<Json, Error> {
 pub fn json_dev(val: &Json) -> Result<Json, Error> {
     match val {
         Json::Number(_) => Ok(Json::from(0)),
-        Json::Array(ref arr) => if arr.len() < 2 {Ok(Json::from(0)) } else {json_arr_dev(arr)},
+        Json::Array(ref arr) => {
+            if arr.len() < 2 {
+                Ok(Json::from(0))
+            } else {
+                json_arr_dev(arr)
+            }
+        }
         _ => Err(Error::BadType),
     }
 }
@@ -329,8 +347,11 @@ fn mul_vals(x: &Json, y: &Json) -> Result<Json, Error> {
 }
 
 fn mul_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
-    let val = x.as_f64().unwrap() * y.as_f64().unwrap();
-    Ok(Json::from(val))
+    let val = match (x.is_i64(), y.is_i64()) {
+        (true, true) => Json::from(x.as_i64().unwrap() * y.as_i64().unwrap()),
+        _ => Json::from(x.as_f64().unwrap() * y.as_f64().unwrap())
+    };
+    Ok(val)
 }
 
 fn mul_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error> {
@@ -365,6 +386,12 @@ pub fn json_div(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
         (Json::Number(ref lhs), Json::Array(ref rhs)) => div_num_arr(lhs, rhs),
         (Json::Number(ref lhs), Json::Number(ref rhs)) => div_nums(lhs, rhs),
         _ => Err(Error::BadType),
+    }
+}
+
+pub fn json_sort(val: &mut Json) {
+    if let Json::Array(arr) = val {
+        arr.sort_by(json_cmp2);
     }
 }
 
@@ -413,14 +440,18 @@ fn div_num_val(x: &JsonNum, y: &Json) -> Result<Json, Error> {
     }
 }
 
-fn json_add_str<X, Y>(x: X, y: Y) -> Result<Json, Error> where X:Into<String>, Y:Into<String> {
+fn json_add_str<X, Y>(x: X, y: Y) -> Result<Json, Error>
+where
+    X: Into<String>,
+    Y: Into<String>,
+{
     let val = x.into() + &y.into();
     Ok(Json::String(val))
 }
 
 //TODO(jaupe) add better error handlinge
 fn json_add_arr_val(x: &[Json], y: &Json) -> Result<Json, Error> {
-    let mut arr = Vec::new(); 
+    let mut arr = Vec::new();
     for x in x {
         arr.push(json_add(x, y)?);
     }
@@ -428,7 +459,7 @@ fn json_add_arr_val(x: &[Json], y: &Json) -> Result<Json, Error> {
 }
 
 fn json_add_val_arr(x: &Json, y: &[Json]) -> Result<Json, Error> {
-    let mut arr = Vec::new(); 
+    let mut arr = Vec::new();
     for y in y {
         arr.push(json_add(x, y)?);
     }
@@ -452,19 +483,19 @@ pub(crate) fn json_add_nums(x: &JsonNum, y: &JsonNum) -> JsonNum {
 }
 
 fn json_sub_arr_num(x: &[Json], y: &Json) -> Result<Json, Error> {
-    let arr = x
-        .iter()
-        .map(|x| json_sub(x, y).unwrap())
-        .collect();
+    let mut arr = Vec::new();
+    for x in x {
+        arr.push(json_sub(x, y)?);
+    }
     Ok(Json::Array(arr))
 }
 
 fn json_sub_num_arr(x: &Json, y: &[Json]) -> Result<Json, Error> {
-    let arr = y
-        .iter()        
-        .map(|y| json_sub(x, y).unwrap()) //TODO remove unwrap and handle error
-        .collect();
-    Ok(Json::Array(arr))
+    let mut out = Vec::new();
+    for y in y {
+        out.push(json_sub(x, y)?);
+    }
+    Ok(Json::Array(out))
 }
 
 fn json_sub_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
@@ -569,7 +600,7 @@ pub fn json_f64(val: &Json) -> Option<f64> {
             } else {
                 None
             }
-        },
+        }
         _ => None,
     }
 }
@@ -650,9 +681,43 @@ pub fn json_insert(val: &mut Json, rows: Vec<JsonObj>) {
     }
 }
 
+fn json_str(val: &Json) -> String {
+    match val {
+        Json::String(s) => s.clone(),
+        val => val.to_string(),
+    }
+}
+
+pub fn json_groupby(key: &str, val: &Json) -> Option<Json> {
+    match val {
+        Json::Array(ref arr) => {
+            let mut group = JsonObj::new();
+            for val in arr {
+                if let Json::Object(obj) = val {
+                    if let Some(key_val) = obj.get(key) {
+                        let entry = group.entry(json_str(key_val)).or_insert_with(|| Json::Array(Vec::new()));
+                        json_append(entry, val.clone());
+                    }
+                }
+            }
+            Some(Json::from(group))
+        }
+        _ => None,
+    }
+}
+
+pub fn json_reverse(val: &mut Json) {
+    match val {
+        Json::Array(ref mut arr) => {
+            arr.reverse();
+        }
+        val => (),
+    }
+}
+
 mod tests {
 
-    use crate::json::*;
+    use super::*;
 
     #[test]
     fn append_obj_ok() {
@@ -709,5 +774,19 @@ mod tests {
             Ok(json!([0, 0, 2, 2, 4, 4, 6, 6, 8, 8])),
             json_bar(&lhs, &rhs)
         );
+    }
+
+    #[test]
+    fn json_sort_ok() {
+        let mut val = json!([1, 9, 4, 8, 3, 6, 10, 5, 7, 2]);
+        json_sort(&mut val);
+        assert_eq!(json!([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), val);
+    }
+
+    #[test]
+    fn json_groupby_ok() {
+        let val = json!([{"name":"jim", "age": 10},{"name":"jon", "age": 15},{"name":"jon", "age": 20},{"name":"jim", "age": 60}]);
+        let exp = json!({"jim":[{"name":"jim", "age": 10},{"name":"jim", "age": 60}], "jon":[{"name":"jon", "age": 15},{"name":"jon", "age": 20}]});
+        assert_eq!(Some(exp), json_groupby("name", &val));
     }
 }
