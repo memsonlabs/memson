@@ -2,19 +2,25 @@ use crate::cmd::Cmd;
 use crate::err::Error;
 use crate::json::*;
 
-fn eval_keyed_bin_cmd<F>(lhs: &Box<Cmd>, rhs: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error> where F:FnOnce(&Json, &Json) -> Result<Json,Error> {
+fn eval_keyed_bin_cmd<F>(lhs: &Box<Cmd>, rhs: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error>
+where
+    F: FnOnce(&Json, &Json) -> Result<Json, Error>,
+{
     let x = eval_keyed_cmd(lhs.as_ref(), val)?;
     let y = eval_keyed_cmd(rhs.as_ref(), val)?;
     f(&x, &y)
 }
 
-fn eval_keyed_unr_cmd<F>(arg: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error> where F:FnOnce(&Json) -> Result<Json,Error> {
+fn eval_keyed_unr_cmd<F>(arg: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error>
+where
+    F: FnOnce(&Json) -> Result<Json, Error>,
+{
     let val = eval_keyed_cmd(arg.as_ref(), val)?;
     f(&val)
 }
 
 pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
-    match cmd {        
+    match cmd {
         Cmd::Add(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_add),
         Cmd::Append(_, _) => Err(Error::BadCmd),
         Cmd::Avg(arg) => eval_keyed_unr_cmd(arg, val, json_avg),
@@ -24,7 +30,7 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
 
         Cmd::Div(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_div),
         Cmd::First(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_first(x).clone())),
-        Cmd::Get( key, arg) => {
+        Cmd::Get(key, arg) => {
             let val = eval_keyed_cmd(arg.as_ref(), val)?;
             json_get(key, &val).ok_or(Error::BadKey)
         }

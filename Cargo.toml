@@ -11,5 +11,12 @@ env_logger = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
 
+
 [dev-dependencies]
 assert_approx_eq = "*"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = 'abort'

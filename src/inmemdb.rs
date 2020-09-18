@@ -3,7 +3,7 @@ use crate::cmd::Filter;
 use crate::cmd::QueryCmd;
 use crate::err::Error;
 use crate::json::*;
-use crate::keyed::{keyed_reduce, eval_keyed_cmd};
+use crate::keyed::{eval_keyed_cmd, keyed_reduce};
 use serde_json::{Value as Json, Value};
 use std::collections::HashMap;
 
@@ -13,29 +13,39 @@ pub struct InMemDb {
 }
 
 impl InMemDb {
-    fn eval_read_bin_cmd<F>(&self, lhs: Box<Cmd>, rhs: Box<Cmd>, f: F) -> Result<Json, Error> where F:FnOnce(&Json, &Json) -> Result<Json, Error> {
+    fn eval_read_bin_cmd<F>(&self, lhs: Box<Cmd>, rhs: Box<Cmd>, f: F) -> Result<Json, Error>
+    where
+        F: FnOnce(&Json, &Json) -> Result<Json, Error>,
+    {
         let x = self.eval_read(*lhs)?;
         let y = self.eval_read(*rhs)?;
         f(&x, &y)
     }
 
-    fn eval_read_unr_cmd<F>(&self, arg: Box<Cmd>, f: F) -> Result<Json, Error> where F:FnOnce(&Json) -> Result<Json, Error> {
+    fn eval_read_unr_cmd<F>(&self, arg: Box<Cmd>, f: F) -> Result<Json, Error>
+    where
+        F: FnOnce(&Json) -> Result<Json, Error>,
+    {
         let val = self.eval_read(*arg)?;
         f(&val)
-    }    
+    }
 
     fn eval_sort_cmd(&self, arg: Box<Cmd>) -> Result<Json, Error> {
         let mut val = self.eval_read(*arg)?;
         json_sort(&mut val);
         Ok(val)
-    }    
-
+    }
 
     pub fn eval_read(&self, cmd: Cmd) -> Result<Json, Error> {
         println!("{:?}", cmd);
         match cmd {
-            Cmd::Append(_, _) | Cmd::Delete(_) | Cmd::Set(_, _) | Cmd::Insert(_, _) | Cmd::Pop(_) | Cmd::Push(_, _) => Err(Error::BadCmd),
-            Cmd::Add(lhs, rhs) => self.eval_read_bin_cmd(lhs,rhs, json_add),
+            Cmd::Append(_, _)
+            | Cmd::Delete(_)
+            | Cmd::Set(_, _)
+            | Cmd::Insert(_, _)
+            | Cmd::Pop(_)
+            | Cmd::Push(_, _) => Err(Error::BadCmd),
+            Cmd::Add(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_add),
             Cmd::Avg(arg) => self.eval_read_unr_cmd(arg, json_avg),
             Cmd::Bar(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_bar),
             Cmd::Len(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_count(x))),
@@ -45,7 +55,7 @@ impl InMemDb {
                 let val = self.eval_read(*arg)?;
                 json_get(&key, &val).ok_or(Error::BadKey)
             }
-            Cmd::Json(val) => Ok(val), 
+            Cmd::Json(val) => Ok(val),
             Cmd::Key(key) => self.eval_key(&key),
             //Cmd::Keys(_) => Ok(self.keys()),
             Cmd::Last(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_last(x).clone())),
@@ -58,39 +68,33 @@ impl InMemDb {
             //Cmd::Summary => Ok(self.summary()),
             Cmd::Sort(arg) => self.eval_sort_cmd(arg),
             Cmd::ToString(arg) => self.eval_read_unr_cmd(arg, |x| Ok(Json::from(json_tostring(x)))),
-            Cmd::Unique(arg) =>  self.eval_read_unr_cmd(arg, |x| Ok(json_unique(x))),
+            Cmd::Unique(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_unique(x))),
             Cmd::Var(arg) => self.eval_read_unr_cmd(arg, json_var),
             Cmd::Query(cmd) => {
                 let query = Query::from(self, cmd);
                 query.exec()
-            }    
+            }
             Cmd::Reverse(arg) => {
                 let mut val = self.eval_read(*arg)?;
                 json_reverse(&mut val);
                 Ok(val)
-            }   
+            }
             Cmd::GroupBy(key, arg) => {
-                let mut val = self.eval_read(*arg)?;
+                let val = self.eval_read(*arg)?;
                 let val = json_groupby(key.as_ref(), &val);
                 Ok(val.unwrap_or(Json::Null))
-            }   
-            Cmd::Median(arg) => {
-                let val = self.eval_read(*arg)?;
-                unimplemented!()
-            }  
-            Cmd::Keys(_) => {
-                unimplemented!()
             }
+            Cmd::Median(_) => unimplemented!(),
+            Cmd::Keys(_) => unimplemented!(),
             Cmd::Summary => Ok(self.summary()),
         }
     }
 
     fn key(&self, key: &str) -> Result<Json, Error> {
-        self.cache.get(key).cloned().ok_or(Error::BadKey)        
+        self.cache.get(key).cloned().ok_or(Error::BadKey)
     }
 
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
-
         match cmd {
             Cmd::Add(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_add),
             Cmd::Append(key, arg) => {
@@ -152,13 +156,17 @@ impl InMemDb {
         let key = it.next().ok_or(Error::BadKey)?;
         let mut val = self.key(key)?;
         while let Some(key) = it.next() {
-        if let Some(v) = json_get(key, &val) {
-            val = v;
-        } else {
-            return Err(Error::BadKey);
-        }
+            if let Some(v) = json_get(key, &val) {
+                val = v;
+            } else {
+                return Err(Error::BadKey);
+            }
         }
         Ok(val)
+    }
+
+    pub fn get(&self, key: &str) -> Result<&Json, Error> {
+        self.cache.get(key).ok_or(Error::BadKey)
     }
 
     pub fn new() -> Self {
@@ -190,10 +198,6 @@ impl InMemDb {
             .map(|x| Json::String(x.to_string()))
             .collect();
         json!({"no_entries": no_entries, "keys": keys})
-    }
-
-    pub fn len(&self) -> usize {
-        self.cache.len()
     }
 
     pub fn pop(&mut self, key: &str) -> Result<Option<Json>, Error> {
@@ -228,34 +232,27 @@ impl InMemDb {
         Ok(Json::Null)
     }
 
-    fn eval_bin_fn<F>(
-        &mut self,
-        lhs: Cmd,
-        rhs: Cmd,
-        f: F,
-    ) -> Result<Json, Error> where F:Fn(&Json, &Json) -> Result<Json, Error> {
+    fn eval_bin_fn<F>(&mut self, lhs: Cmd, rhs: Cmd, f: F) -> Result<Json, Error>
+    where
+        F: Fn(&Json, &Json) -> Result<Json, Error>,
+    {
         let lhs = self.eval(lhs)?;
         let rhs = self.eval(rhs)?;
         f(&lhs, &rhs)
     }
 
-    fn eval_unr_val_fn<F>(
-        &mut self,
-        arg: Cmd,
-        f: F) -> Result<Json, Error> where F:Fn(Json) -> Json {
-        let val = self.eval(arg)?;
-        Ok(f(val))
-    }
-
-    fn eval_unr_fn<F>(
-        &mut self,
-        arg: Cmd,
-        f: F) -> Result<Json, Error> where F:Fn(&Json) -> Result<Json, Error> {
+    fn eval_unr_fn<F>(&mut self, arg: Cmd, f: F) -> Result<Json, Error>
+    where
+        F: Fn(&Json) -> Result<Json, Error>,
+    {
         let val = self.eval(arg)?;
         f(&val)
     }
 
-    fn eval_unr_fn_ref<F>(&mut self, arg: Cmd, f: F) -> Result<Json, Error> where F:Fn(&Json) -> &Json{
+    fn eval_unr_fn_ref<F>(&mut self, arg: Cmd, f: F) -> Result<Json, Error>
+    where
+        F: Fn(&Json) -> &Json,
+    {
         let val = self.eval(arg)?;
         Ok(f(&val).clone())
     }
@@ -321,10 +318,10 @@ impl<'a> Query<'a> {
 
     fn eval_by(&self, from: &Json) -> Result<Option<Vec<Json>>, Error> {
         //TODO remove cloning
-        let val: Json = if let Some(by)  = self.cmd.by.as_ref() {
+        let val: Json = if let Some(by) = self.cmd.by.as_ref() {
             let cmd = Cmd::parse(by.clone())?;
             eval_keyed_cmd(&cmd, from)?
-        } else{
+        } else {
             return Ok(None);
         };
         if let Json::Array(vec) = val {
@@ -332,7 +329,6 @@ impl<'a> Query<'a> {
         } else {
             Err(Error::BadBy)
         }
-
     }
 
     // TODO remove cloning
@@ -361,7 +357,7 @@ impl<'a> Query<'a> {
 
     fn eval_keyed_select(&self, by: &[Json], rows: &[Json]) -> Result<Json, Error> {
         let ids = self.parse_keys()?; // TODO remove unwrap
-        // split data by key
+                                      // split data by key
         let mut split = JsonObj::new();
         if let Some(keys) = ids {
             for (row, by_key) in rows.iter().zip(by.iter()) {
@@ -693,6 +689,16 @@ mod tests {
         assert_eq!(None, db.set("s", json!("hello")));
         assert_eq!(None, db.set("sa", json!(["a", "b", "c", "d"])));
         assert_eq!(None, db.set("t", table_data()));
+        let _ = db.set(
+            "orders",
+            json!([
+                { "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+                { "customer": "ania", "qty": 2, "price": 2.0 },
+                { "customer": "misha", "qty": 4, "price": 1.0 },
+                { "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+                { "customer": "james", "qty": 1, "price": 16.0 },
+            ]),
+        );
     }
 
     #[test]

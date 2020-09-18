@@ -1,32 +1,69 @@
-use crate::cmd::Cmd;
-use crate::err::Error;
-use crate::inmemdb::InMemDb;
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
-use serde::Serialize;
+//! A "tiny database" and accompanying protocol
+//!
+//! This example shows the usage of shared state amongst all connected clients,
+//! namely a database of key/value pairs. Each connected client can send a
+//! series of GET/SET commands to query the current value of a key or set the
+//! value of a key.
+//!
+//! This example has a simple protocol you can use to interact with the server.
+//! To run, first run this in one terminal window:
+//!
+//!     cargo run --example tinydb
+//!
+//! and next in another windows run:
+//!
+//!     cargo run --example connect 127.0.0.1:8080
+//!
+//! In the `connect` window you can type in commands where when you hit enter
+//! you'll get a response from the server for that command. An example session
+//! is:
+//!
+//!
+//!     $ cargo run --example connect 127.0.0.1:8080
+//!     GET foo
+//!     foo = bar
+//!     GET FOOBAR
+//!     error: no key FOOBAR
+//!     SET FOOBAR my awesome string
+//!     set FOOBAR = `my awesome string`, previous: None
+//!     SET foo tokio
+//!     set foo = `tokio`, previous: Some("bar")
+//!     GET foo
+//!     foo = tokio
+//!
+//! Namely you can issue two forms of commands:
+//!
+//! * `GET $key` - this will fetch the value of `$key` from the database and
+//!   return it. The server's database is initially populated with the key `foo`
+//!   set to the value `bar`
+//! * `SET $key $value` - this will set the value of `$key` to `$value`,
+//!   returning the previous value, if any.
+
 use serde_json::json;
 use std::env;
-use std::fmt::Debug;
 use std::sync::{Arc, RwLock};
+use crate::json::{Json};
+use crate::inmemdb::InMemDb;
+use crate::cmd::Cmd;
+use actix_web::{App, HttpServer, middleware, web, HttpResponse};
+use std::fmt::Debug;
+use serde::Serialize;
+use crate::err::Error;
 
 mod cmd;
-mod err;
-mod eval;
 mod inmemdb;
+mod err;
 mod json;
+mod query;
 mod keyed;
 
-/// This is state where we will store *DbExecutor* address.
 type Memson = Arc<RwLock<InMemDb>>;
 
 fn http_resp<T: Debug + Serialize>(r: Result<T, Error>) -> HttpResponse {
     match r {
         Ok(val) => HttpResponse::Ok().json(val),
-        Err(err) => http_err(err.to_string()),
+        Err(_) => HttpResponse::InternalServerError().into(),
     }
-}
-
-fn http_err<T:Serialize>(err: T) -> HttpResponse {
-    HttpResponse::InternalServerError().json(err)
 }
 
 async fn summary(db: web::Data<Memson>) -> HttpResponse {
@@ -38,20 +75,24 @@ async fn summary(db: web::Data<Memson>) -> HttpResponse {
     http_resp(res)
 }
 
-async fn eval(db: web::Data<Memson>, payload: web::Json<serde_json::Value>) -> HttpResponse {
-    // Send message to `DbExecutor` actor
-    let cmd = match Cmd::parse(payload.0) {
+async fn eval(db: web::Data<Memson>, cmd: web::Json<Json>) -> HttpResponse {
+    let cmd = match Cmd::parse(cmd.0) {
         Ok(cmd) => cmd,
-        Err(_) => return http_err("bad json"),
+        Err(err) => return HttpResponse::InternalServerError().json(err.to_string()),
     };
+    // Send message to `DbExecutor` actor
     let res =  if cmd.is_read() {
         let db = match db.read() {
             Ok(db) => db,
-            Err(err) => return http_err(err.to_string()),
+            Err(_) => return HttpResponse::InternalServerError().into(),
         };
         db.eval_read(cmd)
     } else {
-        return http_err("cannot mutate data in demo");
+        let mut db = match db.write() {
+            Ok(db) => db,
+            Err(_) => return HttpResponse::InternalServerError().into(),
+        };
+        db.eval(cmd)
     };
     http_resp(res)
 }
@@ -68,17 +109,15 @@ async fn main() -> std::io::Result<()> {
     println!("deploying on {:?}", addr);
 
     let mut db = InMemDb::new();
-    db.set("orders", json!([
-        { "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
-        { "customer": "ania", "qty": 2, "price": 2.0 },
-        { "customer": "misha", "qty": 4, "price": 1.0 },
-        { "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
-        { "customer": "james", "qty": 1, "price": 16.0 },
-    ]));
-    db.set("x", json!(1));
-    db.set("y", json!(2));
-    db.set("james", json!({ "name": "james perry", "age": 30 }));    
-
+    for i in 0..500 {
+        db.set("orders".to_string() + &i.to_string(), json!([
+            { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+            { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+            { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+            { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+            { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
+        ]));
+    }
     let db_data = Arc::new(RwLock::new(db));
     HttpServer::new(move || {
         App::new()
@@ -88,7 +127,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/cmd").route(web::post().to(eval)))
             .service(web::resource("/").route(web::get().to(summary)))
     })
-    .bind(addr)?
-    .run()
-    .await
+        .bind(addr)?
+        .run()
+        .await
 }

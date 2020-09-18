@@ -139,37 +139,59 @@ pub enum Cmd {
     #[serde(rename = "sort")]
     Sort(Box<Cmd>),
     #[serde(rename = "reverse")]
-    Reverse(Box<Cmd>), 
+    Reverse(Box<Cmd>),
     #[serde(rename = "groupBy")]
-    GroupBy(String, Box<Cmd>),  
+    GroupBy(String, Box<Cmd>),
     #[serde(rename = "median")]
-    Median(Box<Cmd>),     
+    Median(Box<Cmd>),
 }
 
 impl Cmd {
     pub fn is_read(&self) -> bool {
         match self {
-            Cmd::Div(lhs, rhs) | Cmd::Mul(lhs, rhs) | Cmd::Bar(lhs, rhs) | Cmd::Add(lhs, rhs) | Cmd::Sub(lhs, rhs) => {
+            Cmd::Div(lhs, rhs)
+            | Cmd::Mul(lhs, rhs)
+            | Cmd::Bar(lhs, rhs)
+            | Cmd::Add(lhs, rhs)
+            | Cmd::Sub(lhs, rhs) => {
                 let x = lhs.is_read();
                 let y = rhs.is_read();
                 x && y
             }
-            Cmd::Reverse(arg) | Cmd::Median(arg) | Cmd::Sort(arg) | Cmd::GroupBy(_, arg) | Cmd::Last(arg) | Cmd::First(arg) | Cmd::Var(arg) | Cmd::Max(arg) | Cmd::Min(arg) | Cmd::StdDev(arg) | Cmd::Unique(arg) | Cmd::ToString(arg) | Cmd::Avg(arg) | Cmd::Get(_, arg) | Cmd::Sum(arg) => arg.is_read(),
-            Cmd::Push(_, _) | Cmd::Pop(_) | Cmd::Delete(_) | Cmd::Append(_, _) | Cmd::Set(_, _) | Cmd::Insert(_, _) => false,
+            Cmd::Reverse(arg)
+            | Cmd::Median(arg)
+            | Cmd::Sort(arg)
+            | Cmd::GroupBy(_, arg)
+            | Cmd::Last(arg)
+            | Cmd::First(arg)
+            | Cmd::Var(arg)
+            | Cmd::Max(arg)
+            | Cmd::Min(arg)
+            | Cmd::StdDev(arg)
+            | Cmd::Unique(arg)
+            | Cmd::ToString(arg)
+            | Cmd::Avg(arg)
+            | Cmd::Get(_, arg)
+            | Cmd::Sum(arg) => arg.is_read(),
+            Cmd::Push(_, _)
+            | Cmd::Pop(_)
+            | Cmd::Delete(_)
+            | Cmd::Append(_, _)
+            | Cmd::Set(_, _)
+            | Cmd::Insert(_, _) => false,
             Cmd::Key(_)
             | Cmd::Json(_)
             | Cmd::Summary
             | Cmd::Keys(_)
             | Cmd::Len(_)
             | Cmd::Query(_) => true,
-
         }
     }
 
     pub fn keys(&self) -> Option<Vec<String>> {
         match self {
             Cmd::Key(key) => Some(vec![key.clone()]),
-            | Cmd::Last(arg)
+            Cmd::Last(arg)
             | Cmd::Var(arg)
             | Cmd::Avg(arg)
             | Cmd::Min(arg)
@@ -257,8 +279,7 @@ where
     }
 }
 
-fn parse_insert(val: Json) -> Result<Cmd, Error> 
-{
+fn parse_insert(val: Json) -> Result<Cmd, Error> {
     match val {
         Json::Array(mut arr) => {
             if arr.len() != 2 {
@@ -288,14 +309,15 @@ fn parse_insert(val: Json) -> Result<Cmd, Error>
     }
 }
 
-fn parse_unr_str_fn<F>(arg: Json, f: F) -> Result<Cmd, Error> where F:FnOnce(String) -> Cmd {
+fn parse_unr_str_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
+where
+    F: FnOnce(String) -> Cmd,
+{
     match arg {
         Json::String(s) => Ok(f(s)),
         _ => Err(Error::BadKey),
     }
 }
-
-
 
 impl Cmd {
     pub fn parse(json: Json) -> Result<Self, Error> {
@@ -304,7 +326,7 @@ impl Cmd {
                 if obj.len() == 1 {
                     let (key, val) = obj.clone().into_iter().next().unwrap();
                     match key.as_ref() {
-                        "+" | "add" => parse_bin_fn(val, Cmd::Add),                        
+                        "+" | "add" => parse_bin_fn(val, Cmd::Add),
                         "append" => parse_b_str_fn(val, Cmd::Append),
                         "avg" => parse_unr_fn(val, Cmd::Avg),
                         "bar" => parse_bin_fn(val, Cmd::Bar),
@@ -316,9 +338,9 @@ impl Cmd {
                         "insert" => parse_insert(val),
                         "key" => parse_unr_str_fn(val, Cmd::Key),
                         "last" => parse_unr_fn(val, Cmd::Last),
-                        "len" => parse_unr_fn(val, Cmd::Len),                                            
+                        "len" => parse_unr_fn(val, Cmd::Len),
                         "max" => parse_unr_fn(val, Cmd::Max),
-                        "median" => parse_unr_fn(val, Cmd::Median), 
+                        "median" => parse_unr_fn(val, Cmd::Median),
                         "min" => parse_unr_fn(val, Cmd::Min),
                         "*" | "mul" => parse_bin_fn(val, Cmd::Mul),
                         "pop" => parse_unr_str_fn(val, Cmd::Pop),
@@ -330,16 +352,20 @@ impl Cmd {
                         "set" => parse_b_str_fn(val, Cmd::Set),
                         "sub" | "-" => parse_bin_fn(val, Cmd::Sub),
                         "sum" => parse_unr_fn(val, Cmd::Sum),
-                        "str" => parse_unr_fn(val, Cmd::ToString),  
+                        "str" => parse_unr_fn(val, Cmd::ToString),
                         "unique" => parse_unr_fn(val, Cmd::Unique),
-                        "var" => parse_unr_fn(val, Cmd::Var),                    
+                        "var" => parse_unr_fn(val, Cmd::Var),
                         _ => Ok(Cmd::Json(Json::Object(obj))),
                     }
                 } else {
                     Ok(Cmd::Json(Json::from(obj)))
                 }
             }
-            Json::String(s) => Ok(if s == "summary" {Cmd::Summary} else { Cmd::Json(Json::from(s)) }),
+            Json::String(s) => Ok(if s == "summary" {
+                Cmd::Summary
+            } else {
+                Cmd::Json(Json::from(s))
+            }),
             val => Ok(Cmd::Json(val)),
         }
     }
@@ -347,7 +373,6 @@ impl Cmd {
     pub fn is_aggregate(&self) -> bool {
         match self {
             Cmd::Avg(_)
-
             | Cmd::Max(_)
             | Cmd::First(_)
             | Cmd::Min(_)

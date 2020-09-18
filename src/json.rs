@@ -349,7 +349,7 @@ fn mul_vals(x: &Json, y: &Json) -> Result<Json, Error> {
 fn mul_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
     let val = match (x.is_i64(), y.is_i64()) {
         (true, true) => Json::from(x.as_i64().unwrap() * y.as_i64().unwrap()),
-        _ => Json::from(x.as_f64().unwrap() * y.as_f64().unwrap())
+        _ => Json::from(x.as_f64().unwrap() * y.as_f64().unwrap()),
     };
     Ok(val)
 }
@@ -681,7 +681,7 @@ pub fn json_insert(val: &mut Json, rows: Vec<JsonObj>) {
     }
 }
 
-fn json_str(val: &Json) -> String {
+pub fn json_str(val: &Json) -> String {
     match val {
         Json::String(s) => s.clone(),
         val => val.to_string(),
@@ -695,7 +695,9 @@ pub fn json_groupby(key: &str, val: &Json) -> Option<Json> {
             for val in arr {
                 if let Json::Object(obj) = val {
                     if let Some(key_val) = obj.get(key) {
-                        let entry = group.entry(json_str(key_val)).or_insert_with(|| Json::Array(Vec::new()));
+                        let entry = group
+                            .entry(json_str(key_val))
+                            .or_insert_with(|| Json::Array(Vec::new()));
                         json_append(entry, val.clone());
                     }
                 }
@@ -711,7 +713,7 @@ pub fn json_reverse(val: &mut Json) {
         Json::Array(ref mut arr) => {
             arr.reverse();
         }
-        val => (),
+        _ => (),
     }
 }
 

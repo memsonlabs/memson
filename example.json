@@ -1,0 +1,35 @@
+{
+    "james": [
+        {
+            "customer": "james",
+            "qty": 2,
+            "price": 9.0,
+            "discount": 10
+        },
+        {
+            "customer": "james",
+            "qty": 10,
+            "price": 16.0,
+            "discount": 20
+        },
+        {
+            "customer": "james",
+            "qty": 1,
+            "price": 16.0
+        }
+    ],
+    "ania": [
+        {
+            "customer": "ania",
+            "qty": 2,
+            "price": 2.0
+        }
+    ],
+    "misha": [
+        {
+            "customer": "misha",
+            "qty": 4,
+            "price": 1.0
+        }
+    ]
+}
