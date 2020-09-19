@@ -109,7 +109,7 @@ async fn main() -> std::io::Result<()> {
     println!("deploying on {:?}", addr);
 
     let mut db = InMemDb::new();
-    for i in 0..500 {
+    for i in 0..1000 {
         db.set("orders".to_string() + &i.to_string(), json!([
             { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
             { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },

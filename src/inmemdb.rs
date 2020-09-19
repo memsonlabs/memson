@@ -37,7 +37,6 @@ impl InMemDb {
     }
 
     pub fn eval_read(&self, cmd: Cmd) -> Result<Json, Error> {
-        println!("{:?}", cmd);
         match cmd {
             Cmd::Append(_, _)
             | Cmd::Delete(_)
@@ -87,6 +86,10 @@ impl InMemDb {
             Cmd::Median(_) => unimplemented!(),
             Cmd::Keys(_) => unimplemented!(),
             Cmd::Summary => Ok(self.summary()),
+            Cmd::Eval(cmds) => {
+                let out: Result<Vec<Json>, Error> = cmds.into_iter().map(|cmd| self.eval_read(cmd)).collect();
+                out.map(Json::Array)
+            }
         }
     }
 
@@ -520,6 +523,7 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::Median(_) => unimplemented!(),
         Cmd::GroupBy(_, _) => unimplemented!(),
         Cmd::Reverse(_) => unimplemented!(),
+        Cmd::Eval(_) => unimplemented!(),
     }
 }
 

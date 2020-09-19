@@ -57,6 +57,7 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Reverse(_) => unimplemented!(),
         Cmd::GroupBy(_, _) => unimplemented!(),
         Cmd::Median(_) => unimplemented!(),
+        Cmd::Eval(_) => unimplemented!(),
     }
 }
 

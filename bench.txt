@@ -1,1 +1,1 @@
-{"query":{"by":{"key":"customer"},"from":"orders100"}}
+{"last":{"key":"orders100"}}

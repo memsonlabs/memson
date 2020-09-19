@@ -5,18 +5,12 @@ authors = ["jaupe <jaupe@protonmail.com>"]
 edition = "2018"
 
 [dependencies]
-actix-web = "*"
+
+actix-web = "3"
 actix-rt = "*"
 env_logger = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
 
-
 [dev-dependencies]
 assert_approx_eq = "*"
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = "z"
-panic = 'abort'

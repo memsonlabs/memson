@@ -144,6 +144,8 @@ pub enum Cmd {
     GroupBy(String, Box<Cmd>),
     #[serde(rename = "median")]
     Median(Box<Cmd>),
+    #[serde(rename="eval")]
+    Eval(Vec<Cmd>),
 }
 
 impl Cmd {
@@ -185,6 +187,14 @@ impl Cmd {
             | Cmd::Keys(_)
             | Cmd::Len(_)
             | Cmd::Query(_) => true,
+            Cmd::Eval(cmds) => {
+                for cmd in cmds {
+                    if !cmd.is_read() {
+                        return false;
+                    }
+                }
+                return true;
+            }
         }
     }
 
@@ -230,6 +240,19 @@ impl Cmd {
             | Cmd::Pop(_)
             | Cmd::Json(_)
             | Cmd::Set(_, _) => None,
+            Cmd::Eval(cmds) => {
+                let mut keys: Option<Vec<String>> = None;
+                for cmd in cmds {
+                    if let Some(k) = cmd.keys() {
+                        if let Some(ref mut keys) = keys {
+                            keys.extend(k);
+                        } else {
+                            keys = Some(k); 
+                        }
+                    }
+                }
+                keys
+            }
         }
     }
 }
