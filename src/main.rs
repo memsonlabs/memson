@@ -41,7 +41,7 @@
 
 use crate::cmd::Cmd;
 use crate::err::Error;
-use crate::inmemdb::InMemDb;
+use crate::db::InMemDb;
 use crate::json::Json;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use serde::Serialize;
@@ -52,9 +52,8 @@ use std::sync::{Arc, RwLock};
 
 mod cmd;
 mod err;
-mod inmemdb;
+mod db;
 mod json;
-mod keyed;
 
 type Memson = Arc<RwLock<InMemDb>>;
 

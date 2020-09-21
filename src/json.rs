@@ -684,26 +684,6 @@ pub fn json_str(val: &Json) -> String {
     }
 }
 
-pub fn json_groupby(key: &str, val: &Json) -> Option<Json> {
-    match val {
-        Json::Array(ref arr) => {
-            let mut group = JsonObj::new();
-            for val in arr {
-                if let Json::Object(obj) = val {
-                    if let Some(key_val) = obj.get(key) {
-                        let entry = group
-                            .entry(json_str(key_val))
-                            .or_insert_with(|| Json::Array(Vec::new()));
-                        json_append(entry, val.clone());
-                    }
-                }
-            }
-            Some(Json::from(group))
-        }
-        _ => None,
-    }
-}
-
 pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     match val {
         Json::Array(ref mut arr) => unimplemented!(),
