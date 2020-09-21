@@ -2,21 +2,30 @@ use crate::cmd::Cmd;
 use crate::err::Error;
 use crate::json::*;
 
-fn eval_keyed_bin_cmd<F>(lhs: &Box<Cmd>, rhs: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error>
+fn eval_keyed_bin_cmd<F>(lhs: &Cmd, rhs: &Cmd, val: &Json, f: F) -> Result<Json, Error>
 where
     F: FnOnce(&Json, &Json) -> Result<Json, Error>,
 {
-    let x = eval_keyed_cmd(lhs.as_ref(), val)?;
-    let y = eval_keyed_cmd(rhs.as_ref(), val)?;
+    let x = eval_keyed_cmd(lhs, val)?;
+    let y = eval_keyed_cmd(rhs, val)?;
     f(&x, &y)
 }
 
-fn eval_keyed_unr_cmd<F>(arg: &Box<Cmd>, val: &Json, f: F) -> Result<Json, Error>
+fn eval_keyed_unr_cmd<F>(arg: &Cmd, val: &Json, f: F) -> Result<Json, Error>
 where
     F: FnOnce(&Json) -> Result<Json, Error>,
 {
-    let val = eval_keyed_cmd(arg.as_ref(), val)?;
+    let val = eval_keyed_cmd(arg, val)?;
     f(&val)
+}
+
+fn eval_keyed_unr_mut_cmd<F>(arg: &Cmd, val: &Json, f: F) -> Result<Json, Error>
+where
+    F: FnOnce(&mut Json),
+{
+    let mut val = eval_keyed_cmd(arg, val)?;
+    f(&mut val);
+    Ok(val)
 }
 
 pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
@@ -29,7 +38,7 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Delete(_) => Err(Error::BadCmd),
 
         Cmd::Div(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_div),
-        Cmd::First(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_first(x).clone())),
+        Cmd::First(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_first(x))),
         Cmd::Get(key, arg) => {
             let val = eval_keyed_cmd(arg.as_ref(), val)?;
             json_get(key, &val).ok_or(Error::BadKey)
@@ -38,10 +47,30 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Json(val) => Ok(val.clone()),
         Cmd::Key(key) => json_get(key, val).ok_or(Error::BadKey),
         Cmd::Keys(_) => Err(Error::BadCmd),
-        Cmd::Last(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_last(x).clone())),
+        Cmd::Last(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_last(x))),
         Cmd::Max(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_max(x).clone())),
         Cmd::Min(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_min(x).clone())),
-        Cmd::Mul(lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_mul),
+        Cmd::Mul(lhs, rhs) => {
+            match (lhs.as_ref(), rhs.as_ref()) {
+                (Cmd::Key(lhs), Cmd::Key(rhs)) => {
+                    let mut out = Vec::new();
+                    if let Some(rows) = val.as_array() {
+                        for row in rows {
+                            match (row.get(lhs), row.get(rhs)) {
+                                (Some(x), Some(y)) => {
+                                    out.push(json_mul(x, y)?);
+                                }
+                                _ => ()
+                            }
+                        }
+
+                    }
+                    Ok(Json::Array(out))
+                }
+                (lhs, rhs) =>  eval_keyed_bin_cmd(lhs, rhs, val, json_mul)
+            }
+
+        },
         Cmd::Pop(_) => Err(Error::BadCmd),
         Cmd::Push(_, _) => Err(Error::BadCmd),
         Cmd::Query(_) => Err(Error::BadCmd),
@@ -53,11 +82,18 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::ToString(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(Json::from(json_tostring(x)))),
         Cmd::Unique(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_unique(x))),
         Cmd::Var(arg) => eval_keyed_unr_cmd(arg, val, json_var),
-        Cmd::Sort(_) => unimplemented!(),
-        Cmd::Reverse(_) => unimplemented!(),
-        Cmd::GroupBy(_, _) => unimplemented!(),
-        Cmd::Median(_) => unimplemented!(),
-        Cmd::Eval(_) => unimplemented!(),
+        Cmd::Sort(arg) => eval_keyed_unr_mut_cmd(arg, val, json_sort),
+        Cmd::Reverse(arg) => eval_keyed_unr_mut_cmd(arg, val, json_reverse),
+        Cmd::SortBy(arg, sort_key) => {
+            let mut val = eval_keyed_cmd(arg.as_ref(), val)?;
+            json_sortby(&mut val, sort_key);
+            Ok(val)
+        }
+        Cmd::Median(arg) => {
+            let mut val = eval_keyed_cmd(arg.as_ref(), val)?;
+            json_median(&mut val)
+        }
+        Cmd::Eval(_) => Err(Error::BadCmd),
     }
 }
 
@@ -83,6 +119,7 @@ fn obj(val: Json) -> JsonObj {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;

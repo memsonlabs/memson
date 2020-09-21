@@ -39,23 +39,23 @@
 //! * `SET $key $value` - this will set the value of `$key` to `$value`,
 //!   returning the previous value, if any.
 
+use crate::cmd::Cmd;
+use crate::err::Error;
+use crate::inmemdb::InMemDb;
+use crate::json::Json;
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
+use serde::Serialize;
 use serde_json::json;
 use std::env;
-use std::sync::{Arc, RwLock};
-use crate::json::{Json};
-use crate::inmemdb::InMemDb;
-use crate::cmd::Cmd;
-use actix_web::{App, HttpServer, middleware, web, HttpResponse};
 use std::fmt::Debug;
-use serde::Serialize;
-use crate::err::Error;
+use std::sync::{Arc, RwLock};
 
 mod cmd;
-mod inmemdb;
 mod err;
+mod inmemdb;
 mod json;
-mod query;
 mod keyed;
+mod query;
 
 type Memson = Arc<RwLock<InMemDb>>;
 
@@ -81,7 +81,7 @@ async fn eval(db: web::Data<Memson>, cmd: web::Json<Json>) -> HttpResponse {
         Err(err) => return HttpResponse::InternalServerError().json(err.to_string()),
     };
     // Send message to `DbExecutor` actor
-    let res =  if cmd.is_read() {
+    let res = if cmd.is_read() {
         let db = match db.read() {
             Ok(db) => db,
             Err(_) => return HttpResponse::InternalServerError().into(),
@@ -110,13 +110,16 @@ async fn main() -> std::io::Result<()> {
 
     let mut db = InMemDb::new();
     for i in 0..1000 {
-        db.set("orders".to_string() + &i.to_string(), json!([
-            { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
-            { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
-            { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
-            { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
-            { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
-        ]));
+        db.set(
+            "orders".to_string() + &i.to_string(),
+            json!([
+                { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+                { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+                { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+                { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+                { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
+            ]),
+        );
     }
     let db_data = Arc::new(RwLock::new(db));
     HttpServer::new(move || {
@@ -127,7 +130,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/cmd").route(web::post().to(eval)))
             .service(web::resource("/").route(web::get().to(summary)))
     })
-        .bind(addr)?
-        .run()
-        .await
+    .bind(addr)?
+    .run()
+    .await
 }

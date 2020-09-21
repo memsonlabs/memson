@@ -140,11 +140,11 @@ pub enum Cmd {
     Sort(Box<Cmd>),
     #[serde(rename = "reverse")]
     Reverse(Box<Cmd>),
-    #[serde(rename = "groupBy")]
-    GroupBy(String, Box<Cmd>),
+    #[serde(rename = "sortBy")]
+    SortBy(Box<Cmd>, String),
     #[serde(rename = "median")]
     Median(Box<Cmd>),
-    #[serde(rename="eval")]
+    #[serde(rename = "eval")]
     Eval(Vec<Cmd>),
 }
 
@@ -163,7 +163,7 @@ impl Cmd {
             Cmd::Reverse(arg)
             | Cmd::Median(arg)
             | Cmd::Sort(arg)
-            | Cmd::GroupBy(_, arg)
+            | Cmd::SortBy(arg, _)
             | Cmd::Last(arg)
             | Cmd::First(arg)
             | Cmd::Var(arg)
@@ -193,7 +193,7 @@ impl Cmd {
                         return false;
                     }
                 }
-                return true;
+                true
             }
         }
     }
@@ -212,7 +212,7 @@ impl Cmd {
             | Cmd::Unique(arg)
             | Cmd::ToString(arg)
             | Cmd::Len(arg)
-            | Cmd::GroupBy(_, arg)
+            | Cmd::SortBy(arg, _)
             | Cmd::Reverse(arg)
             | Cmd::Median(arg)
             | Cmd::Sort(arg)
@@ -247,7 +247,7 @@ impl Cmd {
                         if let Some(ref mut keys) = keys {
                             keys.extend(k);
                         } else {
-                            keys = Some(k); 
+                            keys = Some(k);
                         }
                     }
                 }

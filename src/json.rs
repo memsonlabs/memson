@@ -2,6 +2,7 @@ use crate::err::Error;
 
 pub use serde_json::{json, Map};
 
+use rayon::prelude::*;
 use serde_json::Number;
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
@@ -185,13 +186,9 @@ pub fn json_last(val: &Json) -> Json {
     match val {
         Json::Array(ref arr) if !arr.is_empty() => arr[arr.len() - 1].clone(),
         Json::String(s) => {
-            let mut it = s.chars();
-            let mut last = None;
-            while let Some(c) = it.next() {
-                last = Some(c);
-            }
-            last.map(|x| Json::String(x.to_string()))
-                .unwrap_or(Json::Null)
+            let it = s.chars();
+            let last = it.last();
+            last.map(String::from).map(Json::from).unwrap_or(Json::Null)
         }
         val => val.clone(),
     }
@@ -708,15 +705,36 @@ pub fn json_groupby(key: &str, val: &Json) -> Option<Json> {
     }
 }
 
-pub fn json_reverse(val: &mut Json) {
+pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     match val {
-        Json::Array(ref mut arr) => {
-            arr.reverse();
-        }
-        _ => (),
+        Json::Array(ref mut arr) => unimplemented!(),
+        _ => Err(Error::ExpectedArr),
     }
 }
 
+pub fn json_reverse(val: &mut Json) {
+    if let Json::Array(ref mut arr) = val {
+        arr.reverse();
+    }
+}
+
+pub fn json_sortby(val: &mut Json, key: &str) {
+    if let Json::Array(ref mut arr) = val {
+        unimplemented!()
+    }
+}
+
+pub fn json_rows_key(key: &str, rows: &[Json]) -> Json {
+    let arr = rows
+        .par_iter()
+        .map(|row| row.get(key))
+        .filter(|x| x.is_some())
+        .map(|x| x.unwrap().clone())
+        .collect();
+    Json::Array(arr)
+}
+
+#[cfg(test)]
 mod tests {
 
     use super::*;

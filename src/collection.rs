@@ -246,6 +246,7 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[JsonObj]) -> Option<Json> {
     }
 }
 
+#[cfg(test)]
 mod tests {
 
     use super::*;

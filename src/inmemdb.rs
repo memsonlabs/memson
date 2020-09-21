@@ -4,6 +4,7 @@ use crate::cmd::QueryCmd;
 use crate::err::Error;
 use crate::json::*;
 use crate::keyed::{eval_keyed_cmd, keyed_reduce};
+use crate::query::Query as Qry;
 use serde_json::{Value as Json, Value};
 use std::collections::HashMap;
 
@@ -13,25 +14,25 @@ pub struct InMemDb {
 }
 
 impl InMemDb {
-    fn eval_read_bin_cmd<F>(&self, lhs: Box<Cmd>, rhs: Box<Cmd>, f: F) -> Result<Json, Error>
+    fn eval_read_bin_cmd<F>(&self, lhs: Cmd, rhs: Cmd, f: F) -> Result<Json, Error>
     where
         F: FnOnce(&Json, &Json) -> Result<Json, Error>,
     {
-        let x = self.eval_read(*lhs)?;
-        let y = self.eval_read(*rhs)?;
+        let x = self.eval_read(lhs)?;
+        let y = self.eval_read(rhs)?;
         f(&x, &y)
     }
 
-    fn eval_read_unr_cmd<F>(&self, arg: Box<Cmd>, f: F) -> Result<Json, Error>
+    fn eval_read_unr_cmd<F>(&self, arg: Cmd, f: F) -> Result<Json, Error>
     where
         F: FnOnce(&Json) -> Result<Json, Error>,
     {
-        let val = self.eval_read(*arg)?;
+        let val = self.eval_read(arg)?;
         f(&val)
     }
 
-    fn eval_sort_cmd(&self, arg: Box<Cmd>) -> Result<Json, Error> {
-        let mut val = self.eval_read(*arg)?;
+    fn eval_sort_cmd(&self, arg: Cmd) -> Result<Json, Error> {
+        let mut val = self.eval_read(arg)?;
         json_sort(&mut val);
         Ok(val)
     }
@@ -44,12 +45,12 @@ impl InMemDb {
             | Cmd::Insert(_, _)
             | Cmd::Pop(_)
             | Cmd::Push(_, _) => Err(Error::BadCmd),
-            Cmd::Add(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_add),
-            Cmd::Avg(arg) => self.eval_read_unr_cmd(arg, json_avg),
-            Cmd::Bar(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_bar),
-            Cmd::Len(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_count(x))),
-            Cmd::Div(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_div),
-            Cmd::First(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_first(x).clone())),
+            Cmd::Add(lhs, rhs) => self.eval_read_bin_cmd(*lhs, *rhs, json_add),
+            Cmd::Avg(arg) => self.eval_read_unr_cmd(*arg, json_avg),
+            Cmd::Bar(lhs, rhs) => self.eval_read_bin_cmd(*lhs, *rhs, json_bar),
+            Cmd::Len(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_count(x))),
+            Cmd::Div(lhs, rhs) => self.eval_read_bin_cmd(*lhs, *rhs, json_div),
+            Cmd::First(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_first(x))),
             Cmd::Get(key, arg) => {
                 let val = self.eval_read(*arg)?;
                 json_get(&key, &val).ok_or(Error::BadKey)
@@ -57,18 +58,20 @@ impl InMemDb {
             Cmd::Json(val) => Ok(val),
             Cmd::Key(key) => self.eval_key(&key),
             //Cmd::Keys(_) => Ok(self.keys()),
-            Cmd::Last(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_last(x).clone())),
-            Cmd::Max(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_max(x).clone())),
-            Cmd::Min(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_min(x).clone())),
-            Cmd::Mul(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_mul),
-            Cmd::StdDev(arg) => self.eval_read_unr_cmd(arg, json_dev),
-            Cmd::Sub(lhs, rhs) => self.eval_read_bin_cmd(lhs, rhs, json_sub),
-            Cmd::Sum(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_sum(x))),
+            Cmd::Last(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_last(x))),
+            Cmd::Max(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_max(x).clone())),
+            Cmd::Min(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_min(x).clone())),
+            Cmd::Mul(lhs, rhs) => self.eval_read_bin_cmd(*lhs, *rhs, json_mul),
+            Cmd::StdDev(arg) => self.eval_read_unr_cmd(*arg, json_dev),
+            Cmd::Sub(lhs, rhs) => self.eval_read_bin_cmd(*lhs, *rhs, json_sub),
+            Cmd::Sum(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_sum(x))),
             //Cmd::Summary => Ok(self.summary()),
-            Cmd::Sort(arg) => self.eval_sort_cmd(arg),
-            Cmd::ToString(arg) => self.eval_read_unr_cmd(arg, |x| Ok(Json::from(json_tostring(x)))),
-            Cmd::Unique(arg) => self.eval_read_unr_cmd(arg, |x| Ok(json_unique(x))),
-            Cmd::Var(arg) => self.eval_read_unr_cmd(arg, json_var),
+            Cmd::Sort(arg) => self.eval_sort_cmd(*arg),
+            Cmd::ToString(arg) => {
+                self.eval_read_unr_cmd(*arg, |x| Ok(Json::from(json_tostring(x))))
+            }
+            Cmd::Unique(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_unique(x))),
+            Cmd::Var(arg) => self.eval_read_unr_cmd(*arg, json_var),
             Cmd::Query(cmd) => {
                 let query = Query::from(self, cmd);
                 query.exec()
@@ -78,19 +81,37 @@ impl InMemDb {
                 json_reverse(&mut val);
                 Ok(val)
             }
-            Cmd::GroupBy(key, arg) => {
-                let val = self.eval_read(*arg)?;
-                let val = json_groupby(key.as_ref(), &val);
-                Ok(val.unwrap_or(Json::Null))
+            Cmd::SortBy(arg, key) => {
+                let mut val = self.eval_read(*arg)?;
+                json_sortby(&mut val, &key);
+                Ok(val)
             }
-            Cmd::Median(_) => unimplemented!(),
-            Cmd::Keys(_) => unimplemented!(),
+            Cmd::Median(arg) => {
+                let mut val = self.eval_read(*arg)?;
+                json_median(&mut val)
+            }
+            Cmd::Keys(page_no) => Ok(self.eval_keys(page_no)),
             Cmd::Summary => Ok(self.summary()),
             Cmd::Eval(cmds) => {
-                let out: Result<Vec<Json>, Error> = cmds.into_iter().map(|cmd| self.eval_read(cmd)).collect();
+                let out: Result<Vec<Json>, Error> =
+                    cmds.into_iter().map(|cmd| self.eval_read(cmd)).collect();
                 out.map(Json::Array)
             }
         }
+    }
+
+    fn eval_keys(&self, page_no: Option<usize>) -> Json {
+        let page_no = page_no.unwrap_or(0);
+        let page_size = 50;
+        let start = page_no * page_size;
+        let vec = self
+            .cache
+            .keys()
+            .skip(start)
+            .take(50)
+            .map(|x| Json::from(x.clone()))
+            .collect();
+        Json::Array(vec)
     }
 
     fn key(&self, key: &str) -> Result<Json, Error> {
@@ -138,7 +159,7 @@ impl InMemDb {
                 let val = self.eval(*arg)?;
                 Ok(self.set(key, val).unwrap_or(Json::Null))
             }
-            Cmd::Sort(arg) => self.eval_sort_cmd(arg),
+            Cmd::Sort(arg) => self.eval_sort_cmd(*arg),
             Cmd::StdDev(arg) => self.eval_unr_fn(*arg, json_dev),
             Cmd::Sub(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_sub),
             Cmd::Sum(arg) => self.eval_unr_fn(*arg, |x| Ok(json_sum(x))),
@@ -150,7 +171,17 @@ impl InMemDb {
                 Ok(json_string(&val))
             }
             Cmd::Key(key) => self.eval_key(&key),
-            _ => unimplemented!(),
+            Cmd::Reverse(arg) => {
+                let mut val = self.eval(*arg)?;
+                json_reverse(&mut val);
+                Ok(val)
+            }
+            Cmd::Median(arg) => {
+                let mut val = self.eval(*arg)?;
+                json_median(&mut val)
+            }
+            Cmd::SortBy(_, _) => unimplemented!(),
+            Cmd::Eval(_) => unimplemented!(),
         }
     }
 
@@ -158,7 +189,7 @@ impl InMemDb {
         let mut it = key.split('.');
         let key = it.next().ok_or(Error::BadKey)?;
         let mut val = self.key(key)?;
-        while let Some(key) = it.next() {
+        for key in it {
             if let Some(v) = json_get(key, &val) {
                 val = v;
             } else {
@@ -209,8 +240,8 @@ impl InMemDb {
     }
 
     pub fn query(&self, cmd: QueryCmd) -> Result<Json, Error> {
-        let qry = Query::from(self, cmd);
-        qry.exec()
+        let qry = Qry::from_cmd(cmd);
+        qry.exec(self)
     }
 
     pub fn get_ref(&self, key: &str) -> Result<&Json, Error> {
@@ -435,7 +466,7 @@ impl<'a> Query<'a> {
 
         if has_aggregation(&selects) {
             let out = reduce(selects, rows);
-            Ok(Json::Object(out))
+            Ok(Json::Array(vec![Json::Object(out)]))
         } else {
             eval_nonaggregate(&selects, rows)
         }
@@ -473,8 +504,8 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
                 Some(Json::from(output))
             }
         }
-        Cmd::First(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_first(&x).clone()),
-        Cmd::Last(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_last(&x).clone()),
+        Cmd::First(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_first(&x)),
+        Cmd::Last(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_last(&x)),
         Cmd::Sum(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_sum(&x)),
         Cmd::Len(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_count(&x)),
         Cmd::Min(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_min(&x).clone()),
@@ -521,7 +552,7 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         }
         Cmd::Sort(_) => unimplemented!(),
         Cmd::Median(_) => unimplemented!(),
-        Cmd::GroupBy(_, _) => unimplemented!(),
+        Cmd::SortBy(_, _) => unimplemented!(),
         Cmd::Reverse(_) => unimplemented!(),
         Cmd::Eval(_) => unimplemented!(),
     }
@@ -693,15 +724,286 @@ mod tests {
         assert_eq!(None, db.set("s", json!("hello")));
         assert_eq!(None, db.set("sa", json!(["a", "b", "c", "d"])));
         assert_eq!(None, db.set("t", table_data()));
-        let _ = db.set(
-            "orders",
-            json!([
-                { "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
-                { "customer": "ania", "qty": 2, "price": 2.0 },
-                { "customer": "misha", "qty": 4, "price": 1.0 },
-                { "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
-                { "customer": "james", "qty": 1, "price": 16.0 },
-            ]),
+        assert_eq!(
+            None,
+            db.set(
+                "orders",
+                json!([
+                    { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+                    { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+                    { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+                    { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+                    { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
+                ])
+            )
+        );
+    }
+
+    #[test]
+    fn select_all_from_orders() {
+        let exp = json!([
+            json!({ "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 }),
+            json!({ "time": 1, "customer": "ania", "qty": 2, "price": 2.0 }),
+            json!({ "time": 2, "customer": "misha", "qty": 4, "price": 1.0 }),
+            json!({ "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 }),
+            json!({ "time": 4, "customer": "james", "qty": 1, "price": 16.0 }),
+        ]);
+        assert_eq!(Ok(exp), query(json!({"from": "orders"})));
+    }
+
+    #[test]
+    fn select_customer_from_orders() {
+        let exp = json!([
+            json!({ "name": "james" }),
+            json!({ "name": "ania" }),
+            json!({ "name": "misha" }),
+            json!({ "name": "james" }),
+            json!({ "name": "james" }),
+        ]);
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "select": {"name":{"key":"customer"}},
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_customer_qty_from_orders() {
+        let exp = json!([
+            json!({ "name": "james", "quantity":2 }),
+            json!({ "name": "ania", "quantity":2 }),
+            json!({ "name": "misha", "quantity":4 }),
+            json!({ "name": "james","quantity":10 }),
+            json!({ "name": "james", "quantity":1 }),
+        ]);
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "select": {
+                    "name":{"key":"customer"},
+                    "quantity":{"key": "qty"},
+                },
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_customer_qty_discount_from_orders() {
+        let exp = json!([
+            json!({ "name": "james", "quantity":2, "discount":10}),
+            json!({ "name": "ania", "quantity":2 }),
+            json!({ "name": "misha", "quantity":4 }),
+            json!({ "name": "james","quantity":10, "discount": 20}),
+            json!({ "name": "james", "quantity":1 }),
+        ]);
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "select": {
+                    "name":{"key":"customer"},
+                    "quantity":{"key": "qty"},
+                    "discount":{"key": "discount"}
+                },
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_unique_customer_from_orders() {
+        let exp = json!([
+            { "uniqueNames": ["james", "ania", "misha"]},
+        ]);
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "select": {
+                    "uniqueNames":{"unique": {"key":"customer"}},
+                },
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_count_discount_count_quantity_from_orders() {
+        let exp = json!([
+            { "countDiscount": 2, "countCustomer": 5}
+        ]);
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "select": {
+                    "countDiscount":{ "len": {"key": "discount"} },
+                    "countCustomer":{ "len": {"key": "customer"} },
+                },
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_mul_price_quantity_from_orders() {
+        let exp = json!([
+            { "value": 18.0 },
+            { "value": 4.0 },
+            { "value": 4.0 },
+            { "value": 160.0 },
+            { "value": 16.0 },
+        ]);
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "select": {
+                    "value":{ "*": [{"key": "qty"}, {"key":"price"}] },
+                },
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_sum_mul_price_quantity_from_orders() {
+        let exp = json!([
+            { "totalValue": 202.0 }
+        ]);
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "select": {
+                    "totalValue": {"sum": { "*": [{"key": "qty"}, {"key":"price"}]} },
+                },
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_by_customer_from_orders() {
+        let exp = json!({
+                "james": [{ "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },{ "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },{ "time": 4, "customer": "james", "qty": 1, "price": 16.0 }],
+                "ania": [{ "time": 1, "customer": "ania", "qty": 2, "price": 2.0 }],
+                "misha": [{ "time": 2, "customer": "misha", "qty": 4, "price": 1.0 }],
+        });
+        assert_eq!(
+            Ok(exp),
+            query(json!({
+                "by": {"key":"customer"},
+                "from": "orders"
+            }))
+        );
+    }
+
+    #[test]
+    fn select_max_qty_by_customer_from_orders() {
+        let exp = json!({
+                "james": { "maxQty": 10 },
+                "ania": { "maxQty": 2 },
+                "misha": { "maxQty": 4 },
+        });
+        assert_eq!(
+            query(json!({
+                "select": {"maxQty":{"max":{"key":"qty"}}},
+                "by": {"key":"customer"},
+                "from": "orders"
+            })),
+            Ok(exp)
+        );
+    }
+
+    #[test]
+    fn select_max_unique_qty_by_customer_from_orders() {
+        let exp = json!({
+                "james": { "maxUniqueQty": 10 },
+                "ania": { "maxUniqueQty": 2 },
+                "misha": { "maxUniqueQty": 4 },
+        });
+        assert_eq!(
+            query(json!({
+                "select": {"maxUniqueQty":{"max":{"unique":{"key":"qty"}}}},
+                "by": {"key":"customer"},
+                "from": "orders"
+            })),
+            Ok(exp)
+        );
+    }
+
+    #[test]
+    fn select_first_time_last_time_from_orders() {
+        let exp = json!([{
+                "start": 0,
+                "end": 4,
+        }]);
+        assert_eq!(
+            query(json!({
+                "select": {
+                    "start": {"first":{"key":"time"}},
+                    "end": {"last":{"key":"time"}},
+                },
+                "from": "orders"
+            })),
+            Ok(exp)
+        );
+    }
+
+    #[test]
+    fn select_first_time_last_time_by_customer_from_orders() {
+        let exp = json!({
+                "james": { "startQty":2, "endQty":1 },
+                "ania": { "startQty":2, "endQty":2 },
+                "misha": { "startQty": 4, "endQty": 4},
+        });
+        assert_eq!(
+            query(json!({
+                "select": {
+                    "startQty":{"first":{"key":"qty"}},
+                    "endQty":{"last":{"key":"qty"}},
+                },
+                "by": {"key":"customer"},
+                "from": "orders"
+            })),
+            Ok(exp)
+        );
+    }
+
+    #[test]
+    fn select_order_volume_by_customer_from_orders() {
+        let exp = json!({
+                "james": { "orderVolume": 194.0 },
+                "ania": { "orderVolume": 4.0 },
+                "misha": { "orderVolume": 4.0 },
+        });
+        assert_eq!(
+            query(json!({
+                "select": {
+                    "orderVolume":{"sum":{"*": [{"key":"qty"},{"key":"price"}]}},
+                },
+                "by": {"key":"customer"},
+                "from": "orders"
+            })),
+            Ok(exp)
+        );
+    }
+
+    #[test]
+    fn select_order_value_by_customer_from_orders() {
+        let exp = json!({
+                "james":{ "orderVal": [18.0, 160.0, 16.0] },
+                "ania": { "orderVal": [4.0] },
+                "misha": { "orderVal": [4.0] },
+        });
+        assert_eq!(
+            query(json!({
+                "select": {
+                    "orderVal":{"*": [{"key":"qty"},{"key":"price"}]},
+                },
+                "by": {"key":"customer"},
+                "from": "orders"
+            })),
+            Ok(exp)
         );
     }
 
@@ -1025,8 +1327,10 @@ mod tests {
     }
 
     fn query(json: Json) -> Result<Json, Error> {
+        println!("json={:?}", json);
         let cmd = serde_json::from_value(json).unwrap();
         let db = test_db();
+        println!("cmd={:?}", cmd);
         let qry = Query::from(&db, cmd);
         qry.exec()
     }
@@ -1152,7 +1456,7 @@ mod tests {
             "select": {"totalAge": {"sum": {"key": "age"}}},
             "from": "t"
         }));
-        let val = json!({"totalAge": 93});
+        let val = json!([{"totalAge": 93}]);
         assert_eq!(Ok(val), qry);
     }
 
@@ -1164,7 +1468,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = json!({"maxAge": 35});
+        let val = json!([{"maxAge": 35}]);
         assert_eq!(Ok(val), qry);
     }
 
@@ -1176,7 +1480,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = json!({"maxName": "misha"});
+        let val = json!([{"maxName": "misha"}]);
         assert_eq!(Ok(val), qry);
     }
 
@@ -1188,7 +1492,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = json!({"minAge": 10});
+        let val = json!([{"minAge": 10}]);
         assert_eq!(Ok(val), qry);
     }
 
@@ -1200,7 +1504,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"avgAge": 23.25})), qry);
+        assert_eq!(Ok(json!([{"avgAge": 23.25}])), qry);
     }
 
     #[test]
@@ -1211,7 +1515,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"firstAge": 35})), qry);
+        assert_eq!(Ok(json!([{"firstAge": 35}])), qry);
     }
 
     #[test]
@@ -1222,7 +1526,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"lastAge": 20})), qry);
+        assert_eq!(Ok(json!([{"lastAge": 20}])), qry);
     }
 
     #[test]
@@ -1233,7 +1537,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"varAge": 146.75})), qry);
+        assert_eq!(Ok(json!([{"varAge": 146.75}])), qry);
     }
 
     #[test]
@@ -1244,7 +1548,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!({"devAge": 9.310612224768036})), qry);
+        assert_eq!(Ok(json!([{"devAge": 9.310612224768036}])), qry);
     }
 
     #[test]
@@ -1256,7 +1560,7 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!({"maxAge": 35})), qry);
+        assert_eq!(Ok(json!([{"maxAge": 35}])), qry);
     }
 
     #[test]
@@ -1280,7 +1584,7 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!({"minAge": 28})), qry);
+        assert_eq!(Ok(json!([{"minAge": 28}])), qry);
     }
 
     #[test]
@@ -1293,7 +1597,7 @@ mod tests {
             "from": "t",
             "where": {">": ["age", 20]}
         }));
-        assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry);
+        assert_eq!(Ok(json!([{"youngestAge": 28, "oldestAge": 35}])), qry);
     }
 
     #[test]

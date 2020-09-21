@@ -31,6 +31,7 @@ pub fn key(keys: &[String], mut val: Option<Json>) -> Option<Json> {
     val
 }
 
+#[cfg(test)]
 mod tests {
     use crate::eval::*;
     use serde_json::json;
