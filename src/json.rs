@@ -2,7 +2,6 @@ use crate::err::Error;
 
 pub use serde_json::{json, Map};
 
-use rayon::prelude::*;
 use serde_json::Number;
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
@@ -722,16 +721,6 @@ pub fn json_sortby(val: &mut Json, key: &str) {
     if let Json::Array(ref mut arr) = val {
         unimplemented!()
     }
-}
-
-pub fn json_rows_key(key: &str, rows: &[Json]) -> Json {
-    let arr = rows
-        .par_iter()
-        .map(|row| row.get(key))
-        .filter(|x| x.is_some())
-        .map(|x| x.unwrap().clone())
-        .collect();
-    Json::Array(arr)
 }
 
 #[cfg(test)]

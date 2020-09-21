@@ -5,7 +5,6 @@ pub enum Error {
     BadType,
     BadCmd,
     BadKey,
-    BadBy,
     ExpectedObj,
     ExpectedArr,
     BadFrom,
@@ -15,7 +14,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self {
-            Error::BadBy => "bad group by",
             Error::BadCmd => "bad command",
             Error::BadType => "incorrect type",
             Error::BadKey => "bad key",

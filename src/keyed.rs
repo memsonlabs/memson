@@ -50,26 +50,22 @@ pub fn eval_keyed_cmd(cmd: &Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Last(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_last(x))),
         Cmd::Max(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_max(x).clone())),
         Cmd::Min(arg) => eval_keyed_unr_cmd(arg, val, |x| Ok(json_min(x).clone())),
-        Cmd::Mul(lhs, rhs) => {
-            match (lhs.as_ref(), rhs.as_ref()) {
-                (Cmd::Key(lhs), Cmd::Key(rhs)) => {
-                    let mut out = Vec::new();
-                    if let Some(rows) = val.as_array() {
-                        for row in rows {
-                            match (row.get(lhs), row.get(rhs)) {
-                                (Some(x), Some(y)) => {
-                                    out.push(json_mul(x, y)?);
-                                }
-                                _ => ()
+        Cmd::Mul(lhs, rhs) => match (lhs.as_ref(), rhs.as_ref()) {
+            (Cmd::Key(lhs), Cmd::Key(rhs)) => {
+                let mut out = Vec::new();
+                if let Some(rows) = val.as_array() {
+                    for row in rows {
+                        match (row.get(lhs), row.get(rhs)) {
+                            (Some(x), Some(y)) => {
+                                out.push(json_mul(x, y)?);
                             }
+                            _ => (),
                         }
-
                     }
-                    Ok(Json::Array(out))
                 }
-                (lhs, rhs) =>  eval_keyed_bin_cmd(lhs, rhs, val, json_mul)
+                Ok(Json::Array(out))
             }
-
+            (lhs, rhs) => eval_keyed_bin_cmd(lhs, rhs, val, json_mul),
         },
         Cmd::Pop(_) => Err(Error::BadCmd),
         Cmd::Push(_, _) => Err(Error::BadCmd),

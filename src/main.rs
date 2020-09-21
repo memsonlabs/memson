@@ -55,7 +55,6 @@ mod err;
 mod inmemdb;
 mod json;
 mod keyed;
-mod query;
 
 type Memson = Arc<RwLock<InMemDb>>;
 

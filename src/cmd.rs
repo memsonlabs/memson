@@ -67,7 +67,7 @@ pub struct QueryCmd {
     #[serde(rename = "select")]
     pub selects: Option<HashMap<String, Cmd>>,
     pub from: String,
-    pub by: Option<Json>,
+    pub by: Option<Box<Cmd>>,
     #[serde(rename = "where")]
     pub filter: Option<Filter>,
 }
@@ -194,64 +194,6 @@ impl Cmd {
                     }
                 }
                 true
-            }
-        }
-    }
-
-    pub fn keys(&self) -> Option<Vec<String>> {
-        match self {
-            Cmd::Key(key) => Some(vec![key.clone()]),
-            Cmd::Last(arg)
-            | Cmd::Var(arg)
-            | Cmd::Avg(arg)
-            | Cmd::Min(arg)
-            | Cmd::Max(arg)
-            | Cmd::Sum(arg)
-            | Cmd::First(arg)
-            | Cmd::StdDev(arg)
-            | Cmd::Unique(arg)
-            | Cmd::ToString(arg)
-            | Cmd::Len(arg)
-            | Cmd::SortBy(arg, _)
-            | Cmd::Reverse(arg)
-            | Cmd::Median(arg)
-            | Cmd::Sort(arg)
-            | Cmd::Get(_, arg) => arg.keys(),
-            Cmd::Bar(lhs, rhs)
-            | Cmd::Add(lhs, rhs)
-            | Cmd::Div(lhs, rhs)
-            | Cmd::Mul(lhs, rhs)
-            | Cmd::Sub(lhs, rhs) => match (lhs.keys(), rhs.keys()) {
-                (Some(mut x), Some(y)) => {
-                    x.extend(y);
-                    Some(x)
-                }
-                (None, Some(v)) => Some(v),
-                (Some(v), None) => Some(v),
-                (None, None) => None,
-            },
-            Cmd::Summary
-            | Cmd::Keys(_)
-            | Cmd::Insert(_, _)
-            | Cmd::Query(_)
-            | Cmd::Append(_, _)
-            | Cmd::Delete(_)
-            | Cmd::Push(_, _)
-            | Cmd::Pop(_)
-            | Cmd::Json(_)
-            | Cmd::Set(_, _) => None,
-            Cmd::Eval(cmds) => {
-                let mut keys: Option<Vec<String>> = None;
-                for cmd in cmds {
-                    if let Some(k) = cmd.keys() {
-                        if let Some(ref mut keys) = keys {
-                            keys.extend(k);
-                        } else {
-                            keys = Some(k);
-                        }
-                    }
-                }
-                keys
             }
         }
     }
