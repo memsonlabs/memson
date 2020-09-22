@@ -302,7 +302,7 @@ fn merge_grouping(
     y: HashMap<String, Vec<Json>>,
 ) -> HashMap<String, Vec<Json>> {
     for (key, val) in y {
-        let vals = x.entry(key).or_insert_with(|| Vec::new());
+        let vals = x.entry(key).or_insert_with(Vec::new);
         vals.extend(val);
     }
     x
@@ -367,7 +367,7 @@ impl<'a> Query<'a> {
                     .filter(|(_, x)| x.is_some())
                     .map(|(row, x)| (row, x.unwrap()))
                     .fold(
-                        || HashMap::new(),
+                        HashMap::new,
                         |mut g, (row, val)| {
                             let entry: &mut Vec<Json> =
                                 g.entry(json_str(val)).or_insert_with(Vec::new);
@@ -375,7 +375,7 @@ impl<'a> Query<'a> {
                             g
                         },
                     )
-                    .reduce(|| HashMap::new(), merge_grouping);
+                    .reduce(HashMap::new, merge_grouping);
                 g
             }
             Cmd::Append(_, _) => unimplemented!(),
