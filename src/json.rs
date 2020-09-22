@@ -3,7 +3,7 @@ use crate::err::Error;
 use rayon::prelude::*;
 pub use serde_json::{json, Map};
 use serde_json::Number;
-use std::cmp::{Ordering, PartialOrd};
+use std::cmp::PartialOrd;
 use std::mem;
 
 pub type Json = serde_json::Value;
@@ -82,16 +82,6 @@ pub fn json_eq(x: &Json, y: &Json) -> bool {
 
 pub fn json_neq(x: &Json, y: &Json) -> bool {
     x != y
-}
-
-fn json_cmp2(x: &Json, y: &Json) -> Ordering {
-    if x == y {
-        Ordering::Equal
-    } else if json_gt(x, y) {
-        Ordering::Greater
-    } else {
-        Ordering::Less
-    }
 }
 
 fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> bool {
@@ -686,7 +676,7 @@ pub fn json_str(val: &Json) -> String {
 
 pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     match val {
-        Json::Array(ref mut arr) => todo!("sort the array then "),
+        Json::Array(ref mut _arr) => todo!("sort the array then "),
         _ => Err(Error::ExpectedArr),
     }
 }
@@ -697,7 +687,7 @@ pub fn json_reverse(val: &mut Json) {
     }
 }
 
-pub fn json_sortby(val: &mut Json, key: &str) {
+pub fn json_sortby(_val: &mut Json, _key: &str) {
     todo!("work out how to handle non existing entries")
 }
 

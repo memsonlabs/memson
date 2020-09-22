@@ -53,6 +53,7 @@ use std::sync::{Arc, RwLock};
 mod cmd;
 mod db;
 mod err;
+mod eval;
 mod json;
 
 type Memson = Arc<RwLock<InMemDb>>;
