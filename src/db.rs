@@ -3,6 +3,7 @@ use crate::cmd::Filter;
 use crate::cmd::QueryCmd;
 use crate::err::Error;
 use crate::json::*;
+use rayon::prelude::*;
 use serde_json::{Value as Json, Value};
 use std::collections::HashMap;
 
@@ -296,6 +297,14 @@ fn has_aggregation(selects: &HashMap<String, Cmd>) -> bool {
     true
 }
 
+fn merge_grouping(mut x: HashMap<String, Vec<Json>>, y: HashMap<String, Vec<Json>>) -> HashMap<String, Vec<Json>> {
+    for (key, val) in y {
+        let vals = x.entry(key).or_insert_with(|| Vec::new());
+        vals.extend(val);
+    }
+    x
+}
+
 impl<'a> Query<'a> {
     pub fn from(db: &'a InMemDb, cmd: QueryCmd) -> Self {
         Self { db, cmd }
@@ -310,31 +319,9 @@ impl<'a> Query<'a> {
             } else {
                 rows.clone()
             };
-            let grouping = match by.as_ref() {
-                Cmd::Key(key) => {
-                    let mut g = HashMap::new();
-                    for row in rows {
-                        if let Some(key) = row.get(key) {
-                            let entry = g.entry(json_str(key)).or_insert_with(Vec::new);
-                            entry.push(row.clone());
-                        }
-                    }
-                    g
-                }
-                _ => unimplemented!(),
-            };
+            let grouping = self.eval_grouping(by, &rows);
             if let Some(selects) = &self.cmd.selects {
-                let mut keyed_obj = JsonObj::new();
-                for (key, keyed_rows) in grouping.into_iter() {
-                    let mut obj = JsonObj::new();
-                    for (col, cmd) in selects {
-                        if let Some(v) = eval_reduce_cmd(cmd, &keyed_rows) {
-                            obj.insert(col.to_string(), v);
-                        }
-                    }
-                    keyed_obj.insert(key, Json::Object(obj));
-                }
-                Ok(Json::from(keyed_obj))
+                self.eval_grouped_select(grouping, selects)
             } else {
                 let mut obj = JsonObj::new();
                 for (k, v) in grouping.into_iter() {
@@ -349,6 +336,65 @@ impl<'a> Query<'a> {
         }
         else {
             self.eval_select(rows)
+        }
+    }
+
+    fn eval_grouped_select(&self, grouping: HashMap<String, Vec<Json>>, selects: &HashMap<String,Cmd>) -> Result<Json, Error> {
+        let mut keyed_obj = JsonObj::new();
+        for (key, keyed_rows) in grouping.into_iter() {
+            let mut obj = JsonObj::new();
+            for (col, cmd) in selects {
+                if let Some(v) = eval_reduce_cmd(cmd, &keyed_rows) {
+                    obj.insert(col.to_string(), v);
+                }
+            }
+            keyed_obj.insert(key, Json::Object(obj));
+        }
+        Ok(Json::from(keyed_obj))
+    }
+
+    fn eval_grouping(&self, by: &Cmd, rows: &[Json]) -> HashMap<String, Vec<Json>> {
+        match by {
+            Cmd::Key(key) => {
+                let g: HashMap<String, Vec<Value>> = rows.par_iter().map(|row| (row,row.get(key))).filter(|(_, x)| x.is_some()).map(|(row,x)| (row, x.unwrap())).fold(|| HashMap::new(), |mut g, (row,val)| {
+                    let entry: &mut Vec<Json> = g.entry(json_str(val)).or_insert_with(Vec::new);
+                    entry.push(row.clone());
+                    g
+                }).reduce(|| HashMap::new(), merge_grouping);
+                g
+            }
+            Cmd::Append(_, _) => unimplemented!(),
+            Cmd::Bar(_, _) => unimplemented!(),
+            Cmd::Set(_, _) => unimplemented!(),
+            Cmd::Max(_) => unimplemented!(),
+            Cmd::Min(_) => unimplemented!(),
+            Cmd::Avg(_) => unimplemented!(),
+            Cmd::Delete(_) => unimplemented!(),
+            Cmd::StdDev(_) => unimplemented!(),
+            Cmd::Sum(_) => unimplemented!(),
+            Cmd::Add(_, _) => unimplemented!(),
+            Cmd::Sub(_, _) => unimplemented!(),
+            Cmd::Mul(_, _) => unimplemented!(),
+            Cmd::Div(_, _) => unimplemented!(),
+            Cmd::First(_) => unimplemented!(),
+            Cmd::Last(_) => unimplemented!(),
+            Cmd::Var(_) => unimplemented!(),
+            Cmd::Push(_, _) => unimplemented!(),
+            Cmd::Pop(_) => unimplemented!(),
+            Cmd::Query(_) => unimplemented!(),
+            Cmd::Insert(_, _) => unimplemented!(),
+            Cmd::Keys(_) => unimplemented!(),
+            Cmd::Len(_) => unimplemented!(),
+            Cmd::Unique(_) => unimplemented!(),
+            Cmd::Json(_) => unimplemented!(),
+            Cmd::Summary => unimplemented!(),
+            Cmd::Get(_, _) => unimplemented!(),
+            Cmd::ToString(_) => unimplemented!(),
+            Cmd::Sort(_) => unimplemented!(),
+            Cmd::Reverse(_) => unimplemented!(),
+            Cmd::SortBy(_, _) => unimplemented!(),
+            Cmd::Median(_) => unimplemented!(),
+            Cmd::Eval(_) => unimplemented!(),
         }
     }
 
@@ -517,12 +563,8 @@ fn eval_nonaggregate(selects: &HashMap<String, Cmd>, rows: &[Json]) -> Result<Js
                 Cmd::Mul(lhs, rhs) => {
                     match (lhs.as_ref(), rhs.as_ref()) {
                         (Cmd::Key(lhs), Cmd::Key(rhs)) => {
-                            match (row.get(lhs), row.get(rhs)) {
-                                (Some(x), Some(y)) => {
-                                    let val = json_mul(x, y)?;
-                                    obj.insert(col_name.to_string(), val);
-                                }
-                                _ => (),
+                            if let (Some(x), Some(y)) = (row.get(lhs), row.get(rhs)) {
+                                obj.insert(col_name.to_string(), json_mul(x, y)?);
                             }
                         }
                         _ => unimplemented!(),

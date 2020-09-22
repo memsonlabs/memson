@@ -2,6 +2,7 @@ use crate::err::Error;
 use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, Json, JsonObj};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 
@@ -212,7 +213,7 @@ where
             let lhs = Box::new(Cmd::parse(arr.pop().unwrap())?);
             Ok(f(lhs, rhs))
         }
-        _ => unimplemented!(),
+        _ => Err(Error::BadCmd),
     }
 }
 

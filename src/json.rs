@@ -772,10 +772,4 @@ mod tests {
         assert_eq!(json!([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), val);
     }
 
-    #[test]
-    fn json_groupby_ok() {
-        let val = json!([{"name":"jim", "age": 10},{"name":"jon", "age": 15},{"name":"jon", "age": 20},{"name":"jim", "age": 60}]);
-        let exp = json!({"jim":[{"name":"jim", "age": 10},{"name":"jim", "age": 60}], "jon":[{"name":"jon", "age": 15},{"name":"jon", "age": 20}]});
-        assert_eq!(Some(exp), json_groupby("name", &val));
-    }
 }
