@@ -40,8 +40,8 @@
 //!   returning the previous value, if any.
 
 use crate::cmd::Cmd;
-use crate::err::Error;
 use crate::db::InMemDb;
+use crate::err::Error;
 use crate::json::Json;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use serde::Serialize;
@@ -51,8 +51,8 @@ use std::fmt::Debug;
 use std::sync::{Arc, RwLock};
 
 mod cmd;
-mod err;
 mod db;
+mod err;
 mod json;
 
 type Memson = Arc<RwLock<InMemDb>>;

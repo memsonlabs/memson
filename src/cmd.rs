@@ -2,7 +2,6 @@ use crate::err::Error;
 use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, Json, JsonObj};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 
@@ -138,7 +137,7 @@ pub enum Cmd {
     #[serde(rename = "str")]
     ToString(Box<Cmd>),
     #[serde(rename = "sort")]
-    Sort(Box<Cmd>),
+    Sort(Box<Cmd>, Option<bool>),
     #[serde(rename = "reverse")]
     Reverse(Box<Cmd>),
     #[serde(rename = "sortBy")]
@@ -163,7 +162,7 @@ impl Cmd {
             }
             Cmd::Reverse(arg)
             | Cmd::Median(arg)
-            | Cmd::Sort(arg)
+            | Cmd::Sort(arg, _)
             | Cmd::SortBy(arg, _)
             | Cmd::Last(arg)
             | Cmd::First(arg)
@@ -321,6 +320,25 @@ impl Cmd {
                         "str" => parse_unr_fn(val, Cmd::ToString),
                         "unique" => parse_unr_fn(val, Cmd::Unique),
                         "var" => parse_unr_fn(val, Cmd::Var),
+                        "sort" => {
+                            match val {
+                                Json::Array(mut arr) => {
+                                    if arr.len() != 2 {
+                                        Err(Error::BadCmd)
+                                    } else {
+                                        let s = arr.remove(1);
+                                        let a = arr.remove(0);
+                                        let arg = Cmd::parse(a)?;
+                                        let interval = s.as_bool().ok_or(Error::BadType)?;
+                                        Ok(Cmd::Sort(Box::new(arg), if interval { Some(interval) } else { None }))
+                                    }
+                                }
+                                val => {
+                                    let arg = Cmd::parse(val)?;
+                                    Ok(Cmd::Sort(Box::new(arg), None))
+                                }
+                            }
+                        }
                         _ => Ok(Cmd::Json(Json::Object(obj))),
                     }
                 } else {
@@ -393,6 +411,44 @@ fn cmd_parse_add() {
     let exp = Cmd::Add(
         Box::new(Cmd::Key("k".to_string())),
         Box::new(Cmd::Json(json!(1))),
+    );
+    assert_eq!(exp, cmd);
+}
+
+#[test]
+fn cmd_parse_sort_descend() {
+    use serde_json::json;
+    let val = json!({"sort": [{"key": "k"}, true]});
+    let cmd = Cmd::parse(val.clone()).unwrap();
+    let exp = Cmd::Sort(
+        Box::new(Cmd::Key("k".to_string())),
+        Some(true),
+    );
+    assert_eq!(exp, cmd);
+
+
+}
+
+#[test]
+fn cmd_parse_sort_ascend_arr() {
+    use serde_json::json;
+    let val = json!({"sort": [{"key": "k"}, false]});
+    let cmd = Cmd::parse(val.clone()).unwrap();
+    let exp = Cmd::Sort(
+        Box::new(Cmd::Key("k".to_string())),
+        None,
+    );
+    assert_eq!(exp, cmd);
+}
+
+#[test]
+fn cmd_parse_sort_ascend() {
+    use serde_json::json;
+    let val = json!({"sort": {"key": "k"}});
+    let cmd = Cmd::parse(val.clone()).unwrap();
+    let exp = Cmd::Sort(
+        Box::new(Cmd::Key("k".to_string())),
+        None,
     );
     assert_eq!(exp, cmd);
 }

@@ -32,7 +32,7 @@ impl InMemDb {
 
     fn eval_sort_cmd(&self, arg: Cmd) -> Result<Json, Error> {
         let mut val = self.eval_read(arg)?;
-        json_sort(&mut val);
+        json_sort_ascend(&mut val);
         Ok(val)
     }
 
@@ -65,7 +65,7 @@ impl InMemDb {
             Cmd::Sub(lhs, rhs) => self.eval_read_bin_cmd(*lhs, *rhs, json_sub),
             Cmd::Sum(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_sum(x))),
             //Cmd::Summary => Ok(self.summary()),
-            Cmd::Sort(arg) => self.eval_sort_cmd(*arg),
+            Cmd::Sort(arg, _) => self.eval_sort_cmd(*arg),
             Cmd::ToString(arg) => {
                 self.eval_read_unr_cmd(*arg, |x| Ok(Json::from(json_tostring(x))))
             }
@@ -158,7 +158,7 @@ impl InMemDb {
                 let val = self.eval(*arg)?;
                 Ok(self.set(key, val).unwrap_or(Json::Null))
             }
-            Cmd::Sort(arg) => self.eval_sort_cmd(*arg),
+            Cmd::Sort(arg, _) => self.eval_sort_cmd(*arg),
             Cmd::StdDev(arg) => self.eval_unr_fn(*arg, json_dev),
             Cmd::Sub(lhs, rhs) => self.eval_bin_fn(*lhs, *rhs, json_sub),
             Cmd::Sum(arg) => self.eval_unr_fn(*arg, |x| Ok(json_sum(x))),
@@ -297,7 +297,10 @@ fn has_aggregation(selects: &HashMap<String, Cmd>) -> bool {
     true
 }
 
-fn merge_grouping(mut x: HashMap<String, Vec<Json>>, y: HashMap<String, Vec<Json>>) -> HashMap<String, Vec<Json>> {
+fn merge_grouping(
+    mut x: HashMap<String, Vec<Json>>,
+    y: HashMap<String, Vec<Json>>,
+) -> HashMap<String, Vec<Json>> {
     for (key, val) in y {
         let vals = x.entry(key).or_insert_with(|| Vec::new());
         vals.extend(val);
@@ -329,17 +332,19 @@ impl<'a> Query<'a> {
                 }
                 Ok(Json::from(obj))
             }
-        }
-        else if let Some(filter) = &self.cmd.filter {
+        } else if let Some(filter) = &self.cmd.filter {
             let rows = self.eval_where(rows, filter.clone())?;
             self.eval_select(&rows)
-        }
-        else {
+        } else {
             self.eval_select(rows)
         }
     }
 
-    fn eval_grouped_select(&self, grouping: HashMap<String, Vec<Json>>, selects: &HashMap<String,Cmd>) -> Result<Json, Error> {
+    fn eval_grouped_select(
+        &self,
+        grouping: HashMap<String, Vec<Json>>,
+        selects: &HashMap<String, Cmd>,
+    ) -> Result<Json, Error> {
         let mut keyed_obj = JsonObj::new();
         for (key, keyed_rows) in grouping.into_iter() {
             let mut obj = JsonObj::new();
@@ -356,11 +361,21 @@ impl<'a> Query<'a> {
     fn eval_grouping(&self, by: &Cmd, rows: &[Json]) -> HashMap<String, Vec<Json>> {
         match by {
             Cmd::Key(key) => {
-                let g: HashMap<String, Vec<Value>> = rows.par_iter().map(|row| (row,row.get(key))).filter(|(_, x)| x.is_some()).map(|(row,x)| (row, x.unwrap())).fold(|| HashMap::new(), |mut g, (row,val)| {
-                    let entry: &mut Vec<Json> = g.entry(json_str(val)).or_insert_with(Vec::new);
-                    entry.push(row.clone());
-                    g
-                }).reduce(|| HashMap::new(), merge_grouping);
+                let g: HashMap<String, Vec<Value>> = rows
+                    .par_iter()
+                    .map(|row| (row, row.get(key)))
+                    .filter(|(_, x)| x.is_some())
+                    .map(|(row, x)| (row, x.unwrap()))
+                    .fold(
+                        || HashMap::new(),
+                        |mut g, (row, val)| {
+                            let entry: &mut Vec<Json> =
+                                g.entry(json_str(val)).or_insert_with(Vec::new);
+                            entry.push(row.clone());
+                            g
+                        },
+                    )
+                    .reduce(|| HashMap::new(), merge_grouping);
                 g
             }
             Cmd::Append(_, _) => unimplemented!(),
@@ -390,7 +405,7 @@ impl<'a> Query<'a> {
             Cmd::Summary => unimplemented!(),
             Cmd::Get(_, _) => unimplemented!(),
             Cmd::ToString(_) => unimplemented!(),
-            Cmd::Sort(_) => unimplemented!(),
+            Cmd::Sort(_, _) => unimplemented!(),
             Cmd::Reverse(_) => unimplemented!(),
             Cmd::SortBy(_, _) => unimplemented!(),
             Cmd::Median(_) => unimplemented!(),
@@ -416,8 +431,8 @@ impl<'a> Query<'a> {
     // TODO remove cloning
     fn eval_select(&self, rows: &[Json]) -> Result<Json, Error> {
         match &self.cmd.selects {
-                Some(selects) => self.eval_obj_selects(selects, rows),
-                None => self.eval_select_all(rows),
+            Some(selects) => self.eval_obj_selects(selects, rows),
+            None => self.eval_select_all(rows),
         }
     }
 
@@ -517,7 +532,7 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::ToString(arg) => {
             eval_reduce_cmd(arg.as_ref(), rows).map(|x| Json::String(x.to_string()))
         }
-        Cmd::Sort(_) => unimplemented!(),
+        Cmd::Sort(_, _) => unimplemented!(),
         Cmd::Median(_) => unimplemented!(),
         Cmd::SortBy(_, _) => unimplemented!(),
         Cmd::Reverse(_) => unimplemented!(),
@@ -548,31 +563,84 @@ fn reduce(selects: &HashMap<String, Cmd>, rows: &[Json]) -> JsonObj {
     obj
 }
 
+fn eval_row_bin_cmd<F>(lhs: &Cmd, rhs: &Cmd, row: &Json, f: F) -> Option<Json>
+where
+    F: Fn(&Json, &Json) -> Option<Json>,
+{
+    let x = eval_row_cmd(lhs, row)?;
+    let y = eval_row_cmd(rhs, row)?;
+    f(&x, &y)
+}
+
+fn eval_row_cmd(cmd: &Cmd, row: &Json) -> Option<Json> {
+    match cmd {
+        Cmd::Key(key) => row.get(key).cloned(),
+        Cmd::Mul(lhs, rhs) => {
+            eval_row_bin_cmd(lhs.as_ref(), rhs.as_ref(), row, |x, y| json_mul(x, y).ok())
+        }
+        Cmd::Append(_, _) => todo!("throw error instead of None"),
+        Cmd::Bar(arg, interval) => {
+            let val = eval_row_cmd(arg.as_ref(), row)?;
+            let interval = eval_row_cmd(interval.as_ref(), row)?;
+            json_bar(&val, &interval).ok()
+        }
+        Cmd::Set(_, _) => todo!("throw error instead of None"),
+        Cmd::Max(_) => None,
+        Cmd::Min(_) => None,
+        Cmd::Avg(_) => None,
+        Cmd::Delete(_) => todo!("throw error instead of None"),
+        Cmd::StdDev(_) => None,
+        Cmd::Sum(_) => None,
+        Cmd::Add(lhs, rhs) => match (lhs.as_ref(), rhs.as_ref()) {
+            (Cmd::Key(lhs), Cmd::Key(rhs)) => {
+                if let (Some(x), Some(y)) = (row.get(lhs), row.get(rhs)) {
+                    json_add(x, y).ok()
+                } else {
+                    None
+                }
+            }
+            (lhs, rhs) => {
+                let x = eval_row_cmd(lhs, row)?;
+                let y = eval_row_cmd(rhs, row)?;
+                json_add(&x, &y).ok()
+            }
+        },
+        Cmd::Sub(_, _) => unimplemented!(),
+        Cmd::Div(_, _) => unimplemented!(),
+        Cmd::First(_) => None,
+        Cmd::Last(_) => None,
+        Cmd::Var(_) => None,
+        Cmd::Push(_, _) => todo!("throw error instead of None"),
+        Cmd::Pop(_) => todo!("throw error instead of None"),
+        Cmd::Query(_) => todo!("throw error instead of None"),
+        Cmd::Insert(_, _) => todo!("throw error instead of None"),
+        Cmd::Keys(_) => todo!("throw error instead of None"),
+        Cmd::Len(_) => None,
+        Cmd::Unique(_) => None,
+        Cmd::Json(val) => Some(val.clone()),
+        Cmd::Summary => todo!("throw error instead of None"),
+        Cmd::Get(key, arg) => {
+            let val = eval_row_cmd(arg.as_ref(), row)?;
+            val.get(key).cloned()
+        }
+        Cmd::ToString(arg) => eval_row_cmd(arg.as_ref(), row).map(|x| Json::String(json_str(&x))),
+        Cmd::Sort(_, _) => None,
+        Cmd::Reverse(_) => None,
+        Cmd::SortBy(_, _) => None,
+        Cmd::Median(_) => None,
+        Cmd::Eval(_) => todo!("throw an error here"),
+    }
+}
+
 fn eval_nonaggregate(selects: &HashMap<String, Cmd>, rows: &[Json]) -> Result<Json, Error> {
     let mut out = Vec::new();
     for row in rows {
         let mut obj = JsonObj::new();
         for (col_name, cmd) in selects {
             //eval_row(&mut obj, select, row)?;
-            match cmd {
-                Cmd::Key(key) => {
-                    if let Some(val) = row.get(key) {
-                        obj.insert(col_name.to_string(), val.clone());
-                    }
-                },
-                Cmd::Mul(lhs, rhs) => {
-                    match (lhs.as_ref(), rhs.as_ref()) {
-                        (Cmd::Key(lhs), Cmd::Key(rhs)) => {
-                            if let (Some(x), Some(y)) = (row.get(lhs), row.get(rhs)) {
-                                obj.insert(col_name.to_string(), json_mul(x, y)?);
-                            }
-                        }
-                        _ => unimplemented!(),
-                    }
-                }
-                _ => unimplemented!(),
+            if let Some(val) = eval_row_cmd(cmd, row) {
+                obj.insert(col_name.to_string(), val);
             }
-
         }
         if !obj.is_empty() {
             out.push(Json::from(obj));

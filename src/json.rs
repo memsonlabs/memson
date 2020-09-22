@@ -1,7 +1,7 @@
 use crate::err::Error;
 
+use rayon::prelude::*;
 pub use serde_json::{json, Map};
-
 use serde_json::Number;
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
@@ -385,9 +385,9 @@ pub fn json_div(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
-pub fn json_sort(val: &mut Json) {
-    if let Json::Array(arr) = val {
-        arr.sort_by(json_cmp2);
+pub fn json_sort_ascend(val: &mut Json)  {
+    if let Json::Array(ref mut arr) = val {
+        arr.par_sort_by(|x,y| json_str(x).cmp(&json_str(y)));
     }
 }
 
@@ -686,7 +686,7 @@ pub fn json_str(val: &Json) -> String {
 
 pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     match val {
-        Json::Array(ref mut arr) => unimplemented!(),
+        Json::Array(ref mut arr) => todo!("sort the array then "),
         _ => Err(Error::ExpectedArr),
     }
 }
@@ -698,9 +698,7 @@ pub fn json_reverse(val: &mut Json) {
 }
 
 pub fn json_sortby(val: &mut Json, key: &str) {
-    if let Json::Array(ref mut arr) = val {
-        unimplemented!()
-    }
+    todo!("work out how to handle non existing entries")
 }
 
 #[cfg(test)]
@@ -768,8 +766,11 @@ mod tests {
     #[test]
     fn json_sort_ok() {
         let mut val = json!([1, 9, 4, 8, 3, 6, 10, 5, 7, 2]);
-        json_sort(&mut val);
-        assert_eq!(json!([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), val);
-    }
+        json_sort_ascend(&mut val);
+        assert_eq!(json!([1, 10, 2, 3, 4, 5, 6, 7, 8, 9]), val);
 
+        let mut val = json!(["1", 9, 4, 8, 3, 6, 10, 5, 7, 1]);
+        json_sort_ascend(&mut val);
+        assert_eq!(json!([ '1', 1, 10, 3, 4, 5, 6, 7, 8, 9 ]), val);
+    }
 }
