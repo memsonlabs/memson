@@ -160,7 +160,7 @@ impl InMemDb {
             //Cmd::Summary => Ok(self.summary()),
             Cmd::Sort(arg, _) => self.eval_sort_cmd(*arg),
             Cmd::ToString(arg) => {
-                self.eval_read_unr_cmd(*arg, |x| Ok(Json::from(json_tostring(x))))
+                self.eval_read_unr_cmd(*arg, |x| Ok(json_string(&x)))
             }
             Cmd::Unique(arg) => self.eval_read_unr_cmd(*arg, |x| Ok(json_unique(x))),
             Cmd::Var(arg) => self.eval_read_unr_cmd(*arg, json_var),
@@ -641,7 +641,7 @@ fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::Keys(_) => None,
         Cmd::Summary => None,
         Cmd::ToString(arg) => {
-            eval_reduce_cmd(arg.as_ref(), rows).map(|x| Json::String(x.to_string()))
+            eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_string(&x))
         }
         Cmd::Sort(_, _) => unimplemented!(),
         Cmd::Median(_) => unimplemented!(),
@@ -742,7 +742,10 @@ fn eval_row_cmd(cmd: &Cmd, row: &JsonObj) -> Option<Json> {
             let val = eval_row_cmd(arg.as_ref(), row)?;
             val.get(key).cloned()
         }
-        Cmd::ToString(arg) => eval_row_cmd(arg.as_ref(), row).map(|x| Json::String(json_str(&x))),
+        Cmd::ToString(arg) => {
+            let val = eval_row_cmd(arg.as_ref(), row)?;
+            Some(json_string(&val))
+        }
         Cmd::Sort(_, _) => None,
         Cmd::Reverse(_) => None,
         Cmd::SortBy(_, _) => None,

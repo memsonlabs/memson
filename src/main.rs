@@ -105,7 +105,7 @@ async fn main() -> std::io::Result<()> {
     let port = env::var("PORT").unwrap_or_else(|_| "8686".to_string());
 
     let addr = host + ":" + &port;
-    println!("deploying on {:?}", addr);
+    println!("memson is starting on {}", addr);
 
     let mut db = InMemDb::new();
     for i in 0..1000 {

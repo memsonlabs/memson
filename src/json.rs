@@ -619,7 +619,11 @@ fn arr_min(s: &[Json]) -> &Json {
 }
 
 pub fn json_string(x: &Json) -> Json {
-    Json::String(x.to_string())
+    match x {
+        Json::Array(arr) => Json::Array(arr.par_iter().map(json_string).collect()),
+        Json::String(s) => Json::String(s.to_string()),
+        val => Json::String(val.to_string()),
+    }
 }
 
 pub fn json_get<'a>(key: &str, val: &'a Json) -> Option<Json> {
