@@ -45,7 +45,6 @@ use crate::err::Error;
 use crate::json::Json;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use serde::Serialize;
-use serde_json::json;
 use std::env;
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock};
@@ -107,7 +106,7 @@ async fn main() -> std::io::Result<()> {
     let addr = host + ":" + &port;
     println!("memson is starting on {}", addr);
 
-    let mut db = InMemDb::new();
+    let db = InMemDb::new();
     let db_data = Arc::new(RwLock::new(db));
     HttpServer::new(move || {
         App::new()
