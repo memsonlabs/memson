@@ -108,18 +108,17 @@ async fn main() -> std::io::Result<()> {
     println!("memson is starting on {}", addr);
 
     let mut db = InMemDb::new();
-    for i in 0..1000 {
-        db.set(
-            "orders".to_string() + &i.to_string(),
-            json!([
-                { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
-                { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
-                { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
-                { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
-                { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
-            ]),
-        );
-    }
+    db.set(
+        "orders".to_string() + &i.to_string(),
+        json!([
+            { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+            { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+            { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+            { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+            { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
+        ]),
+    );
+
     let db_data = Arc::new(RwLock::new(db));
     HttpServer::new(move || {
         App::new()
