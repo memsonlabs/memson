@@ -1,9 +1,9 @@
 use crate::err::Error;
 
 use rayon::prelude::*;
-pub use serde_json::{json, Map};
 use serde_json::Number;
-use std::cmp::PartialOrd;
+pub use serde_json::{json, Map};
+use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
 pub type Json = serde_json::Value;
@@ -78,6 +78,20 @@ impl GtLt for Lt {
 
 pub fn json_eq(x: &Json, y: &Json) -> bool {
     x == y
+}
+
+pub fn json_or(x: &Json, y: &Json) -> bool {
+    match (x, y) {
+        (Json::Bool(x), Json::Bool(y)) => *x || *y,
+        _ => false,
+    }
+}
+
+pub fn json_and(x: &Json, y: &Json) -> bool {
+    match (x, y) {
+        (Json::Bool(x), Json::Bool(y)) => *x && *y,
+        _ => false,
+    }
 }
 
 pub fn json_neq(x: &Json, y: &Json) -> bool {
@@ -375,9 +389,9 @@ pub fn json_div(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
-pub fn json_sort_ascend(val: &mut Json)  {
+pub fn json_sort_ascend(val: &mut Json) {
     if let Json::Array(ref mut arr) = val {
-        arr.par_sort_by(|x,y| json_str(x).cmp(&json_str(y)));
+        arr.par_sort_by(|x, y| json_str(x).cmp(&json_str(y)));
     }
 }
 
@@ -527,13 +541,6 @@ fn json_arr_sum(s: &[Json]) -> Json {
         }
     }
     Json::Number(total)
-}
-
-pub fn json_obj_ref(val: &Json) -> Result<&JsonObj, Error> {
-    match val {
-        Json::Object(obj) => Ok(obj),
-        _ => Err(Error::ExpectedObj),
-    }
 }
 
 fn json_arr_avg(s: &[Json]) -> Result<Json, Error> {
@@ -691,6 +698,59 @@ pub fn json_sortby(_val: &mut Json, _key: &str) {
     todo!("work out how to handle non existing entries")
 }
 
+fn gt(x: &Json, y: &Json) -> bool {
+    match (x, y) {
+        (Json::Number(x), Json::Number(y)) => num_gt(x, y),
+        (Json::String(x), Json::String(y)) => x > y,
+        _ => unimplemented!(),
+    }
+}
+
+fn num_gt(x: &Number, y: &Number) -> bool {
+    match (x.as_i64(), y.as_i64()) {
+        (Some(x), Some(y)) => x > y,
+        _ => x.as_f64().unwrap() > y.as_f64().unwrap(),
+    }
+}
+
+pub fn json_ord(x: &Json, y: &Json) -> Ordering {
+    if x == y {
+        Ordering::Equal
+    } else if gt(x, y) {
+        Ordering::Greater
+    } else {
+        Ordering::Less
+    }
+}
+
+pub fn json_desc_ord(x: &Json, y: &Json) -> Ordering {
+    if x == y {
+        Ordering::Equal
+    } else if gt(x, y) {
+        Ordering::Less
+    } else {
+        Ordering::Greater
+    }
+}
+
+pub fn sortby_key(key: &str, x: &Json, y: &Json) -> Ordering {
+    match (x.get(key), y.get(key)) {
+        (Some(x), Some(y)) => json_ord(x, y),
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+pub fn sortby_desc_key(key: &str, x: &Json, y: &Json) -> Ordering {
+    match (x.get(key), y.get(key)) {
+        (Some(x), Some(y)) => json_desc_ord(x, y),
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -761,6 +821,6 @@ mod tests {
 
         let mut val = json!(["1", 9, 4, 8, 3, 6, 10, 5, 7, 1]);
         json_sort_ascend(&mut val);
-        assert_eq!(json!([ '1', 1, 10, 3, 4, 5, 6, 7, 8, 9 ]), val);
+        assert_eq!(json!(['1', 1, 10, 3, 4, 5, 6, 7, 8, 9]), val);
     }
 }

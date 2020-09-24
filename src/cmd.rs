@@ -1,66 +1,7 @@
 use crate::err::Error;
-use crate::json::{json_eq, json_gt, json_gte, json_lt, json_lte, json_neq, Json, JsonObj};
+use crate::json::{Json, JsonObj};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-
-pub enum Filter {
-    #[serde(rename = "==")]
-    Eq(String, Json),
-    #[serde(rename = "!=")]
-    NotEq(String, Json),
-    #[serde(rename = ">")]
-    Gt(String, Json),
-    #[serde(rename = "<")]
-    Lt(String, Json),
-    #[serde(rename = ">=")]
-    Gte(String, Json),
-    #[serde(rename = "<=")]
-    Lte(String, Json),
-    #[serde(rename = "&&")]
-    And(Box<Filter>, Box<Filter>),
-    #[serde(rename = "||")]
-    Or(Box<Filter>, Box<Filter>),
-}
-
-impl Filter {
-    pub fn apply(&self, row: &JsonObj) -> bool {
-        match self {
-            Filter::Eq(key, val) => Filter::eval(row, key, val, &json_eq),
-            Filter::NotEq(key, val) => Filter::eval(row, key, val, &json_neq),
-            Filter::Lt(key, val) => Filter::eval(row, key, val, &json_lt),
-            Filter::Gt(key, val) => Filter::eval(row, key, val, &json_gt),
-            Filter::Lte(key, val) => Filter::eval(row, key, val, &json_lte),
-            Filter::Gte(key, val) => Filter::eval(row, key, val, &json_gte),
-            Filter::And(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x && y),
-            Filter::Or(lhs, rhs) => Filter::eval_gate(row, lhs, rhs, &|x, y| x || y),
-        }
-    }
-
-    fn eval_gate(
-        row: &JsonObj,
-        lhs: &Filter,
-        rhs: &Filter,
-        p: &dyn Fn(bool, bool) -> bool,
-    ) -> bool {
-        let lhs = lhs.apply(row);
-        let rhs = rhs.apply(row);
-        p(lhs, rhs)
-    }
-
-    fn eval(
-        row: &JsonObj,
-        key: &str,
-        val: &Json,
-        predicate: &dyn Fn(&Json, &Json) -> bool,
-    ) -> bool {
-        match row.get(key) {
-            Some(v) => predicate(v, val),
-            None => false,
-        }
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct QueryCmd {
@@ -69,7 +10,10 @@ pub struct QueryCmd {
     pub from: String,
     pub by: Option<Box<Cmd>>,
     #[serde(rename = "where")]
-    pub filter: Option<Filter>,
+    pub filter: Option<Json>,
+    #[serde(rename = "sortBy")]
+    pub sort: Option<String>,
+    pub descend: Option<bool>,
 }
 
 impl QueryCmd {
@@ -146,6 +90,22 @@ pub enum Cmd {
     Median(Box<Cmd>),
     #[serde(rename = "eval")]
     Eval(Vec<Cmd>),
+    #[serde(rename = "==")]
+    Eq(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "!=")]
+    NotEq(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = ">")]
+    Gt(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "<")]
+    Lt(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = ">=")]
+    Gte(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "<=")]
+    Lte(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "&&")]
+    And(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "||")]
+    Or(Box<Cmd>, Box<Cmd>),
 }
 
 impl Cmd {
@@ -155,7 +115,15 @@ impl Cmd {
             | Cmd::Mul(lhs, rhs)
             | Cmd::Bar(lhs, rhs)
             | Cmd::Add(lhs, rhs)
-            | Cmd::Sub(lhs, rhs) => {
+            | Cmd::Sub(lhs, rhs)
+            | Cmd::Eq(lhs, rhs)
+            | Cmd::NotEq(lhs, rhs)
+            | Cmd::Lt(lhs, rhs)
+            | Cmd::Gt(lhs, rhs)
+            | Cmd::Lte(lhs, rhs)
+            | Cmd::Gte(lhs, rhs)
+            | Cmd::And(lhs, rhs)
+            | Cmd::Or(lhs, rhs) => {
                 let x = lhs.is_read();
                 let y = rhs.is_read();
                 x && y
@@ -291,6 +259,14 @@ impl Cmd {
                 if obj.len() == 1 {
                     let (key, val) = obj.clone().into_iter().next().unwrap();
                     match key.as_ref() {
+                        "&&" => parse_bin_fn(val, Cmd::And),
+                        "==" => parse_bin_fn(val, Cmd::Eq),
+                        "!=" => parse_bin_fn(val, Cmd::NotEq),
+                        ">" => parse_bin_fn(val, Cmd::Gt),
+                        "<" => parse_bin_fn(val, Cmd::Lt),
+                        ">=" => parse_bin_fn(val, Cmd::Gte),
+                        "<=" => parse_bin_fn(val, Cmd::Lte),
+                        "||" => parse_bin_fn(val, Cmd::Or),
                         "+" | "add" => parse_bin_fn(val, Cmd::Add),
                         "append" => parse_b_str_fn(val, Cmd::Append),
                         "avg" => parse_unr_fn(val, Cmd::Avg),
@@ -320,25 +296,26 @@ impl Cmd {
                         "str" => parse_unr_fn(val, Cmd::ToString),
                         "unique" => parse_unr_fn(val, Cmd::Unique),
                         "var" => parse_unr_fn(val, Cmd::Var),
-                        "sort" => {
-                            match val {
-                                Json::Array(mut arr) => {
-                                    if arr.len() != 2 {
-                                        Err(Error::BadCmd)
-                                    } else {
-                                        let s = arr.remove(1);
-                                        let a = arr.remove(0);
-                                        let arg = Cmd::parse(a)?;
-                                        let interval = s.as_bool().ok_or(Error::BadType)?;
-                                        Ok(Cmd::Sort(Box::new(arg), if interval { Some(interval) } else { None }))
-                                    }
-                                }
-                                val => {
-                                    let arg = Cmd::parse(val)?;
-                                    Ok(Cmd::Sort(Box::new(arg), None))
+                        "sort" => match val {
+                            Json::Array(mut arr) => {
+                                if arr.len() != 2 {
+                                    Err(Error::BadCmd)
+                                } else {
+                                    let s = arr.remove(1);
+                                    let a = arr.remove(0);
+                                    let arg = Cmd::parse(a)?;
+                                    let interval = s.as_bool().ok_or(Error::BadType)?;
+                                    Ok(Cmd::Sort(
+                                        Box::new(arg),
+                                        if interval { Some(interval) } else { None },
+                                    ))
                                 }
                             }
-                        }
+                            val => {
+                                let arg = Cmd::parse(val)?;
+                                Ok(Cmd::Sort(Box::new(arg), None))
+                            }
+                        },
                         _ => Ok(Cmd::Json(Json::Object(obj))),
                     }
                 } else {
@@ -420,13 +397,8 @@ fn cmd_parse_sort_descend() {
     use serde_json::json;
     let val = json!({"sort": [{"key": "k"}, true]});
     let cmd = Cmd::parse(val.clone()).unwrap();
-    let exp = Cmd::Sort(
-        Box::new(Cmd::Key("k".to_string())),
-        Some(true),
-    );
+    let exp = Cmd::Sort(Box::new(Cmd::Key("k".to_string())), Some(true));
     assert_eq!(exp, cmd);
-
-
 }
 
 #[test]
@@ -434,10 +406,7 @@ fn cmd_parse_sort_ascend_arr() {
     use serde_json::json;
     let val = json!({"sort": [{"key": "k"}, false]});
     let cmd = Cmd::parse(val.clone()).unwrap();
-    let exp = Cmd::Sort(
-        Box::new(Cmd::Key("k".to_string())),
-        None,
-    );
+    let exp = Cmd::Sort(Box::new(Cmd::Key("k".to_string())), None);
     assert_eq!(exp, cmd);
 }
 
@@ -446,9 +415,6 @@ fn cmd_parse_sort_ascend() {
     use serde_json::json;
     let val = json!({"sort": {"key": "k"}});
     let cmd = Cmd::parse(val.clone()).unwrap();
-    let exp = Cmd::Sort(
-        Box::new(Cmd::Key("k".to_string())),
-        None,
-    );
+    let exp = Cmd::Sort(Box::new(Cmd::Key("k".to_string())), None);
     assert_eq!(exp, cmd);
 }

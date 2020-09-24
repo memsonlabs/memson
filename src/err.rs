@@ -5,10 +5,10 @@ pub enum Error {
     BadType,
     BadCmd,
     BadKey,
-    ExpectedObj,
     ExpectedArr,
     BadFrom,
     Serialize,
+    BadGroupBy
 }
 
 impl fmt::Display for Error {
@@ -17,10 +17,10 @@ impl fmt::Display for Error {
             Error::BadCmd => "bad command",
             Error::BadType => "incorrect type",
             Error::BadKey => "bad key",
-            Error::ExpectedObj => "expected object",
             Error::ExpectedArr => "expected json array",
             Error::BadFrom => "bad from",
             Error::Serialize => "bad serialization",
+            Error::BadGroupBy => "bad group by",
         };
         write!(f, "{}", "error: ".to_string() + msg)
     }
