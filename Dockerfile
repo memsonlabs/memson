@@ -1,14 +1,16 @@
-FROM rust:alpine
+# Build Stage
+FROM rust:1.46.0 AS builder
+WORKDIR /usr/src/
 
-RUN apk add libc-dev
-
+RUN USER=root cargo new memson
 WORKDIR /usr/src/memson
-COPY Cargo.toml .
-COPY Cargo.lock .
-COPY src src
+COPY Cargo.toml Cargo.lock ./
+RUN cargo build --release
 
-EXPOSE 8686
-
+COPY src ./src
 RUN cargo install --path .
 
-CMD ["memson"]
+# Bundle Stage
+FROM scratch
+COPY --from=builder /usr/local/cargo/bin/memson .
+CMD ["./memson"]
