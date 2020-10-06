@@ -1,7 +1,14 @@
-use crate::err::Error;
 use crate::json::{Json, JsonObj};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
+use crate::err::Error;
+
+pub type Cache = BTreeMap<String, Json>;
+
+pub struct Query<'a> {
+    pub(crate) cache: &'a Cache,
+    pub(crate) cmd: QueryCmd,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct QueryCmd {
@@ -17,7 +24,7 @@ pub struct QueryCmd {
 }
 
 impl QueryCmd {
-    fn parse(json: Json) -> Result<Self, Error> {
+    fn parse(json: Json) -> crate::Result<Self> {
         serde_json::from_value(json).map_err(|_| Error::Serialize)
     }
 }
@@ -106,6 +113,8 @@ pub enum Cmd {
     And(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "||")]
     Or(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "map")]
+    Map(Box<Cmd>, String),
 }
 
 impl Cmd {
@@ -142,7 +151,8 @@ impl Cmd {
             | Cmd::ToString(arg)
             | Cmd::Avg(arg)
             | Cmd::Get(_, arg)
-            | Cmd::Sum(arg) => arg.is_read(),
+            | Cmd::Sum(arg)
+            | Cmd::Map(arg, _) => arg.is_read(),
             Cmd::Push(_, _)
             | Cmd::Pop(_)
             | Cmd::Delete(_)
@@ -168,8 +178,8 @@ impl Cmd {
 }
 
 fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
-where
-    F: FnOnce(Box<Cmd>, Box<Cmd>) -> Cmd,
+    where
+        F: FnOnce(Box<Cmd>, Box<Cmd>) -> Cmd,
 {
     match arg {
         Json::Array(mut arr) => {
@@ -185,16 +195,16 @@ where
 }
 
 fn parse_unr_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
-where
-    F: FnOnce(Box<Cmd>) -> Cmd,
+    where
+        F: FnOnce(Box<Cmd>) -> Cmd,
 {
     let val = Cmd::parse(arg)?;
     Ok(f(Box::new(val)))
 }
 
 fn parse_b_str_fn<F>(val: Json, f: F) -> Result<Cmd, Error>
-where
-    F: FnOnce(String, Box<Cmd>) -> Cmd,
+    where
+        F: FnOnce(String, Box<Cmd>) -> Cmd,
 {
     match val {
         Json::Array(mut arr) => {
@@ -243,8 +253,8 @@ fn parse_insert(val: Json) -> Result<Cmd, Error> {
 }
 
 fn parse_unr_str_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
-where
-    F: FnOnce(String) -> Cmd,
+    where
+        F: FnOnce(String) -> Cmd,
 {
     match arg {
         Json::String(s) => Ok(f(s)),
@@ -253,11 +263,16 @@ where
 }
 
 impl Cmd {
+    pub fn parse_line(line: &str) -> Result<Self, Error> {
+        let val = serde_json::from_str(line).map_err(|_| Error::BadIO)?;
+        Self::parse(val)
+    }
+
     pub fn parse(json: Json) -> Result<Self, Error> {
         match json {
             Json::Object(obj) => {
                 if obj.len() == 1 {
-                    let (key, val) = obj.clone().into_iter().next().unwrap();
+                    let (key, mut val): (String, Json) = obj.clone().into_iter().next().unwrap();
                     match key.as_ref() {
                         "&&" => parse_bin_fn(val, Cmd::And),
                         "==" => parse_bin_fn(val, Cmd::Eq),
@@ -280,6 +295,12 @@ impl Cmd {
                         "key" => parse_unr_str_fn(val, Cmd::Key),
                         "last" => parse_unr_fn(val, Cmd::Last),
                         "len" => parse_unr_fn(val, Cmd::Len),
+                        "map" => {
+                            let arr = val.as_array_mut().ok_or(Error::ExpectedArr)?;
+                            let f = arr.remove(1).as_str().ok_or(Error::BadArg)?.to_string();
+                            let arg = Cmd::parse(arr.remove(0))?;
+                            Ok(Cmd::Map(Box::new(arg), f.to_string()))
+                        }
                         "max" => parse_unr_fn(val, Cmd::Max),
                         "median" => parse_unr_fn(val, Cmd::Median),
                         "min" => parse_unr_fn(val, Cmd::Min),

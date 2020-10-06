@@ -6,6 +6,10 @@ pub use serde_json::{json, Map};
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
+pub fn null() -> Json {
+    Json::Null
+}
+
 pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
@@ -626,7 +630,7 @@ pub fn json_string(x: &Json) -> Json {
     }
 }
 
-pub fn json_get<'a>(key: &str, val: &'a Json) -> Option<Json> {
+pub fn json_get(key: &str, val: &Json) -> Option<Json> {
     match val {
         Json::Array(arr) => {
             if arr.is_empty() {
@@ -635,7 +639,7 @@ pub fn json_get<'a>(key: &str, val: &'a Json) -> Option<Json> {
             let mut out = Vec::new();
             for val in arr {
                 if let Some(v) = json_get(key, val) {
-                    out.push(v);
+                    out.push(v.clone());
                 }
             }
             if out.is_empty() {
@@ -689,6 +693,28 @@ pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     match val {
         Json::Array(ref mut _arr) => todo!("sort the array then "),
         _ => Err(Error::ExpectedArr),
+    }
+}
+
+fn map(f: &str) -> Option<fn(&Json) -> Result<Json,Error>> {
+    match f {
+        "max" => Some(|x| Ok(json_max(x).clone())),
+        "min" => Some(|x| Ok(json_min(x).clone())),
+        _ => unimplemented!(),
+    }
+}
+
+pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
+    let f = map(&f).ok_or(Error::BadCmd)?;
+    match val {
+        Json::Array(arr) => {
+            let mut v = Vec::with_capacity(arr.len());
+            for val in arr {
+                v.push(f(val)?);
+            }
+            Ok(Json::Array(v))
+        }
+        val => f(&val),
     }
 }
 
