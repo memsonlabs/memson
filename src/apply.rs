@@ -1,14 +1,18 @@
 use crate::cmd::Cmd;
-use crate::json::{Json, json_and, json_var, json_sort_ascend, json_sortby, json_median, json_or, json_map, gt, noteq, lt, lte, gte, numsort};
+use crate::json::{
+    gt, gte, json_and, json_map, json_median, json_or, json_sort_ascend, json_sortby, json_var, lt,
+    lte, noteq, numsort, Json,
+};
 use crate::json::{
     json_add, json_avg, json_count, json_dev, json_div, json_eq, json_first, json_flat, json_get,
     json_in, json_last, json_max, json_min, json_mul, json_reverse, json_sub, json_sum,
     json_tostring, json_unique,
 };
-use crate::{Res, Error};
+use crate::{Error, Res};
 
 pub fn apply(cmd: Cmd, val: &Json) -> Res {
     match cmd {
+        Cmd::Apply(_lhs, _rhs) => unimplemented!(),
         Cmd::Key(key) => {
             if let Some(arr) = val.as_array() {
                 let mut out = Vec::new();
@@ -40,8 +44,8 @@ pub fn apply(cmd: Cmd, val: &Json) -> Res {
         Cmd::Append(_lhs, _rhs) => unimplemented!(),
         Cmd::Bar(_, _) => unimplemented!(),
         Cmd::Set(_, _) => unimplemented!(),
-        Cmd::Max(arg) => Ok(json_min(&apply(*arg, val)?).clone()),
-        Cmd::Min(arg) => Ok(json_max(&apply(*arg, val)?).clone()),
+        Cmd::Max(arg) => Ok(json_max(&apply(*arg, val)?).clone()),
+        Cmd::Min(arg) => Ok(json_min(&apply(*arg, val)?).clone()),
         Cmd::Avg(arg) => json_avg(&apply(*arg, val)?),
         Cmd::Delete(_) => unimplemented!(),
         Cmd::StdDev(arg) => json_dev(&apply(*arg, val)?),
@@ -100,6 +104,19 @@ pub fn apply(cmd: Cmd, val: &Json) -> Res {
         Cmd::In(lhs, rhs) => Ok(json_in(&apply(*lhs, val)?, &apply(*rhs, val)?)),
         Cmd::Flat(arg) => Ok(json_flat(apply(*arg, val)?)),
         Cmd::NumSort(arg, descend) => Ok(numsort(apply(*arg, val)?, descend)),
+        Cmd::Has(ref key) => {
+            let f = |x:&Json| x.get(&key).is_some();
+            Ok(match val {
+                Json::Array(arr) => {
+                    let mut out = Vec::new();
+                    for val in arr {
+                        out.push(apply(cmd.clone(), val)?);
+                    }
+                    Json::Array(out)
+                }
+                val => Json::Bool(f(val)),
+            })
+        }
     }
 }
 

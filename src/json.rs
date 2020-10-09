@@ -6,8 +6,6 @@ pub use serde_json::{json, Map};
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
-
-
 pub fn null() -> Json {
     Json::Null
 }
@@ -138,75 +136,90 @@ fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> b
 pub fn noteq(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_neq(x, y)).map(Json::Bool).collect();
+            let v = lhs
+                .iter()
+                .zip(rhs.iter())
+                .map(|(x, y)| json_neq(x, y))
+                .map(Json::Bool)
+                .collect();
             Json::Array(v)
         }
         (Json::Array(lhs), y) => {
             Json::Array(lhs.iter().map(|x| json_neq(x, y)).map(Json::Bool).collect())
         }
-        (x,y) => {
-            Json::Bool(json_neq(x, y))
-        }
+        (x, y) => Json::Bool(json_neq(x, y)),
     }
 }
 
 pub fn gt(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_gt(x, y)).map(Json::Bool).collect();
+            let v = lhs
+                .iter()
+                .zip(rhs.iter())
+                .map(|(x, y)| json_gt(x, y))
+                .map(Json::Bool)
+                .collect();
             Json::Array(v)
         }
         (Json::Array(lhs), y) => {
             Json::Array(lhs.iter().map(|x| json_gt(x, y)).map(Json::Bool).collect())
         }
-        (x,y) => {
-            Json::Bool(json_gt(x, y))
-        }
+        (x, y) => Json::Bool(json_gt(x, y)),
     }
 }
 
 pub fn gte(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_gte(x, y)).map(Json::Bool).collect();
+            let v = lhs
+                .iter()
+                .zip(rhs.iter())
+                .map(|(x, y)| json_gte(x, y))
+                .map(Json::Bool)
+                .collect();
             Json::Array(v)
         }
         (Json::Array(lhs), y) => {
             Json::Array(lhs.iter().map(|x| json_gte(x, y)).map(Json::Bool).collect())
         }
-        (x,y) => {
-            Json::Bool(json_gte(x, y))
-        }
+        (x, y) => Json::Bool(json_gte(x, y)),
     }
 }
 
 pub fn lte(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_lte(x, y)).map(Json::Bool).collect();
+            let v = lhs
+                .iter()
+                .zip(rhs.iter())
+                .map(|(x, y)| json_lte(x, y))
+                .map(Json::Bool)
+                .collect();
             Json::Array(v)
         }
         (Json::Array(lhs), y) => {
             Json::Array(lhs.iter().map(|x| json_lte(x, y)).map(Json::Bool).collect())
         }
-        (x,y) => {
-            Json::Bool(json_lte(x, y))
-        }
+        (x, y) => Json::Bool(json_lte(x, y)),
     }
 }
 
 pub fn lt(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_lt(x, y)).map(Json::Bool).collect();
+            let v = lhs
+                .iter()
+                .zip(rhs.iter())
+                .map(|(x, y)| json_lt(x, y))
+                .map(Json::Bool)
+                .collect();
             Json::Array(v)
         }
         (Json::Array(lhs), y) => {
             Json::Array(lhs.iter().map(|x| json_lt(x, y)).map(Json::Bool).collect())
         }
-        (x,y) => {
-            Json::Bool(json_lt(x, y))
-        }
+        (x, y) => Json::Bool(json_lt(x, y)),
     }
 }
 
@@ -790,10 +803,9 @@ fn map(f: &str) -> Option<fn(&Json) -> Result<Json, Error>> {
     }
 }
 
-pub fn numsort(mut val: Json, descend: bool) -> Json {
+pub fn numsort(mut _val: Json, _descend: bool) -> Json {
     unimplemented!()
 }
-
 
 pub fn json_in(lhs: &Json, rhs: &Json) -> Json {
     if let Json::Array(arr) = lhs {

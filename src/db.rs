@@ -1,3 +1,4 @@
+use crate::apply::apply;
 use crate::cmd::{Cache, Cmd, Query, QueryCmd};
 use crate::err::Error;
 use crate::eval::*;
@@ -71,15 +72,6 @@ impl InMemDb {
             .collect();
         json!({"no_entries": no_entries, "keys": keys})
     }
-}
-
-fn has_aggregation(selects: &HashMap<String, Cmd>) -> bool {
-    for (_, cmd) in selects.iter() {
-        if !cmd.is_aggregate() {
-            return false;
-        }
-    }
-    true
 }
 
 fn merge_grouping(
@@ -162,8 +154,9 @@ impl<'a> Query<'a> {
         let mut keyed_obj = JsonObj::new();
         for (key, keyed_rows) in grouping {
             let mut obj = JsonObj::new();
+            let keyed_val = Json::Array(keyed_rows);
             for (col, cmd) in selects {
-                if let Some(v) = eval_rows_cmd(cmd, &keyed_rows) {
+                if let Some(v) = eval_rows_cmd(cmd.clone(), &keyed_val) {
                     obj.insert(col.to_string(), v);
                 }
             }
@@ -200,6 +193,7 @@ impl<'a> Query<'a> {
     }
 
     fn eval_where(&self, rows: &[Json], filter: &Cmd) -> Result<Vec<Json>, Error> {
+        println!("eval_where({:?}, {:?})", rows, filter);
         let mut filtered_rows = Vec::new();
         for row in rows {
             if let Some(obj) = row.as_object() {
@@ -228,7 +222,13 @@ impl<'a> Query<'a> {
             return self.eval_select_all(rows);
         }
         //todo the cmds vec is not neccessary
-
+        let mut projections = Map::new();
+        for (name, select) in selects {
+            let val = apply(select.clone(), &Json::Array(rows.to_vec()))?;
+            projections.insert(name.to_string(), val);
+        }
+        Ok(Json::Object(projections))
+        /*
         if has_aggregation(&selects) {
             let out = reduce(selects, rows);
             let val = Json::Array(vec![Json::Object(out)]);
@@ -236,6 +236,7 @@ impl<'a> Query<'a> {
         } else {
             eval_nonaggregate(&selects, rows)
         }
+        */
     }
 
     fn eval_select_all(&self, rows: &[Json]) -> Result<Json, Error> {
@@ -245,20 +246,6 @@ impl<'a> Query<'a> {
         }
         Ok(Json::from(output))
     }
-}
-
-fn reduce_select(select: (&String, &Cmd), rows: &[Json], output: &mut JsonObj) {
-    if let Some(val) = eval_rows_cmd(select.1, rows) {
-        output.insert(select.0.to_string(), val);
-    }
-}
-
-fn reduce(selects: &HashMap<String, Cmd>, rows: &[Json]) -> JsonObj {
-    let mut obj = JsonObj::new();
-    for select in selects {
-        reduce_select(select, rows, &mut obj);
-    }
-    obj
 }
 
 #[cfg(test)]
@@ -382,13 +369,7 @@ mod tests {
 
     #[test]
     fn select_customer_from_orders() {
-        let exp = json!([
-            json!({ "name": "james" }),
-            json!({ "name": "ania" }),
-            json!({ "name": "misha" }),
-            json!({ "name": "james" }),
-            json!({ "name": "james" }),
-        ]);
+        let exp = json!({"name":["james", "ania", "misha", "james", "james"]});
         assert_eq!(
             Ok(exp),
             query(json!({
@@ -400,13 +381,7 @@ mod tests {
 
     #[test]
     fn select_customer_qty_from_orders() {
-        let exp = json!([
-            json!({ "name": "james", "quantity":2 }),
-            json!({ "name": "ania", "quantity":2 }),
-            json!({ "name": "misha", "quantity":4 }),
-            json!({ "name": "james","quantity":10 }),
-            json!({ "name": "james", "quantity":1 }),
-        ]);
+        let exp = json!({"name": ["james", "ania","misha","james","james"], "quantity": [2,2,4,10,1]});
         assert_eq!(
             Ok(exp),
             query(json!({
@@ -421,13 +396,11 @@ mod tests {
 
     #[test]
     fn select_customer_qty_discount_from_orders() {
-        let exp = json!([
-            json!({ "name": "james", "quantity":2, "discount":10}),
-            json!({ "name": "ania", "quantity":2 }),
-            json!({ "name": "misha", "quantity":4 }),
-            json!({ "name": "james","quantity":10, "discount": 20}),
-            json!({ "name": "james", "quantity":1 }),
-        ]);
+        let exp = json!({
+            "name": ["james", "ania", "misha", "james", "james"],
+            "quantity": [2, 2, 4, 10, 1],
+            "discount": [10,20]
+        });
         assert_eq!(
             Ok(exp),
             query(json!({
@@ -443,9 +416,7 @@ mod tests {
 
     #[test]
     fn select_unique_customer_from_orders() {
-        let exp = json!([
-            { "uniqueNames": ["james", "ania", "misha"]},
-        ]);
+        let exp = json!({ "uniqueNames": ["james", "ania", "misha"] });
         assert_eq!(
             Ok(exp),
             query(json!({
@@ -459,9 +430,9 @@ mod tests {
 
     #[test]
     fn select_count_discount_count_quantity_from_orders() {
-        let exp = json!([
+        let exp = json!(
             { "countDiscount": 2, "countCustomer": 5}
-        ]);
+        );
         assert_eq!(
             Ok(exp),
             query(json!({
@@ -476,13 +447,7 @@ mod tests {
 
     #[test]
     fn select_mul_price_quantity_from_orders() {
-        let exp = json!([
-            { "value": 18.0 },
-            { "value": 4.0 },
-            { "value": 4.0 },
-            { "value": 160.0 },
-            { "value": 16.0 },
-        ]);
+        let exp: Json = json!({ "value": [18.0, 4.0, 4.0, 160.0, 16.0] });
         assert_eq!(
             Ok(exp),
             query(json!({
@@ -496,9 +461,7 @@ mod tests {
 
     #[test]
     fn select_sum_mul_price_quantity_from_orders() {
-        let exp = json!([
-            { "totalValue": 202.0 }
-        ]);
+        let exp = json!({ "totalValue": 202.0 });
         assert_eq!(
             Ok(exp),
             query(json!({
@@ -562,10 +525,10 @@ mod tests {
 
     #[test]
     fn select_first_time_last_time_from_orders() {
-        let exp = json!([{
+        let exp = json!({
                 "start": 0,
                 "end": 4,
-        }]);
+        });
         assert_eq!(
             query(json!({
                 "select": {
@@ -986,12 +949,7 @@ mod tests {
     #[test]
     fn select_1_prop_query() {
         let qry = query(json!({"select": {"name": {"key": "name"}}, "from": "t"}));
-        let val = json!([
-            {"name": "james"},
-            {"name": "ania"},
-            {"name": "misha"},
-            {"name": "ania"},
-        ]);
+        let val = json!({"name": ["james", "ania", "misha", "ania"]});
         assert_eq!(Ok(val), qry);
     }
 
@@ -1005,12 +963,11 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = json!([
-            {"name": "james", "age": 35},
-            {"name": "ania", "age": 28, "job": "english teacher"},
-            {"name": "misha", "age": 10},
-            {"name": "ania", "age": 20},
-        ]);
+        let val = json!({
+            "name": ["james", "ania", "misha", "ania"],
+            "age": [35, 28, 10, 20],
+            "job": ["english teacher"],
+        });
         assert_eq!(Ok(val), qry);
     }
 
@@ -1090,7 +1047,7 @@ mod tests {
             "select": {"totalAge": {"sum": {"key": "age"}}},
             "from": "t"
         }));
-        let val = json!([{"totalAge": 93}]);
+        let val = json!({"totalAge": 93});
         assert_eq!(Ok(val), qry);
     }
 
@@ -1102,7 +1059,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = json!([{"maxAge": 35}]);
+        let val = json!({"maxAge": 35});
         assert_eq!(Ok(val), qry);
     }
 
@@ -1114,7 +1071,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = json!([{"maxName": "misha"}]);
+        let val = json!({"maxName": "misha"});
         assert_eq!(Ok(val), qry);
     }
 
@@ -1126,7 +1083,7 @@ mod tests {
             },
             "from": "t"
         }));
-        let val = json!([{"minAge": 10}]);
+        let val = json!({"minAge": 10});
         assert_eq!(Ok(val), qry);
     }
 
@@ -1138,7 +1095,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!([{"avgAge": 23.25}])), qry);
+        assert_eq!(Ok(json!({"avgAge": 23.25})), qry);
     }
 
     #[test]
@@ -1149,7 +1106,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!([{"firstAge": 35}])), qry);
+        assert_eq!(Ok(json!({"firstAge": 35})), qry);
     }
 
     #[test]
@@ -1160,7 +1117,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!([{"lastAge": 20}])), qry);
+        assert_eq!(Ok(json!({"lastAge": 20})), qry);
     }
 
     #[test]
@@ -1171,7 +1128,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!([{"varAge": 146.75}])), qry);
+        assert_eq!(Ok(json!({"varAge": 146.75})), qry);
     }
 
     #[test]
@@ -1182,7 +1139,7 @@ mod tests {
             },
             "from": "t"
         }));
-        assert_eq!(Ok(json!([{"devAge": 9.310612224768036}])), qry);
+        assert_eq!(Ok(json!({"devAge": 9.310612224768036})), qry);
     }
 
     #[test]
@@ -1194,7 +1151,7 @@ mod tests {
             "from": "t",
             "where": {">": [{"key":"age"}, 20]}
         }));
-        assert_eq!(Ok(json!([{"maxAge": 35}])), qry);
+        assert_eq!(Ok(json!({"maxAge": 35})), qry);
     }
 
     #[test]
@@ -1206,7 +1163,7 @@ mod tests {
             "from": "t",
             "where": {">": [{"key":"age"}, 20]}
         }));
-        assert_eq!(Ok(json!([{"age":35}, {"age": 28}])), qry);
+        assert_eq!(Ok(json!({"age":[35, 28]})), qry);
     }
 
     #[test]
@@ -1218,7 +1175,7 @@ mod tests {
             "from": "t",
             "where": {">": [{"key":"age"}, 20]}
         }));
-        assert_eq!(Ok(json!([{"minAge": 28}])), qry);
+        assert_eq!(Ok(json!({"minAge": 28})), qry);
     }
 
     #[test]
@@ -1231,7 +1188,7 @@ mod tests {
             "from": "t",
             "where": {">": [{"key":"age"}, 20]}
         }));
-        assert_eq!(Ok(json!([{"youngestAge": 28, "oldestAge": 35}])), qry);
+        assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry);
     }
 
     #[test]
@@ -1432,9 +1389,9 @@ mod tests {
         }));
         assert_eq!(
             Ok(json!({
-                "ania": {},
-                "james": {},
-                "misha": {},
+                "ania": {"qty":[], "price":[]},
+                "james": {"qty":[], "price":[]},
+                "misha": {"qty":[], "price":[]},
             })),
             qry
         );
@@ -1454,7 +1411,7 @@ mod tests {
         assert_eq!(
             Ok(json!({
                 "ania": {"age": [28], "job": ["english teacher"]},
-                "james": {"age": [35]},
+                "james": {"age": [35], "job": []},
             })),
             qry
         );
@@ -1610,7 +1567,7 @@ mod tests {
     fn select_from_orders_where_key_eq_discount() {
         let qry = query(json!({
             "from": "orders",
-            "where": {"key": "discount"},
+            "where": {"has": "discount"},
         }));
         assert_eq!(
             Ok(json!([

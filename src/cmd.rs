@@ -33,6 +33,8 @@ impl QueryCmd {
 pub enum Cmd {
     #[serde(rename = "append")]
     Append(String, Box<Cmd>),
+    #[serde(rename = "apply")]
+    Apply(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "bar")]
     Bar(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "set")]
@@ -121,6 +123,8 @@ pub enum Cmd {
     Flat(Box<Cmd>),
     #[serde(rename = "numSort")]
     NumSort(Box<Cmd>, bool),
+    #[serde(rename = "has")]
+    Has(String),
 }
 
 fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
@@ -239,6 +243,7 @@ impl Cmd {
                         "get" => parse_b_str_fn(val, Cmd::Get),
                         "insert" => parse_insert(val),
                         "key" => parse_unr_str_fn(val, Cmd::Key),
+                        "has" => parse_unr_str_fn(val, Cmd::Has),
                         "last" => parse_unr_fn(val, Cmd::Last),
                         "len" => parse_unr_fn(val, Cmd::Len),
                         "flat" => parse_unr_fn(val, Cmd::Flat),

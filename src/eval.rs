@@ -1,10 +1,10 @@
+use crate::apply::apply;
 use crate::cmd::{Cache, Cmd, Query, QueryCmd};
 use crate::json::*;
 use crate::Error;
 use crate::Res;
 use core::option::Option::Some;
 use std::collections::HashMap;
-use crate::apply::apply;
 
 fn eval_sort_cmd(cache: &mut Cache, arg: Cmd) -> Res {
     let mut val = eval_cmd(cache, arg)?;
@@ -22,6 +22,10 @@ fn delete(cache: &mut Cache, key: &str) -> Res {
 
 pub fn eval_cmd(cache: &mut Cache, cmd: Cmd) -> Res {
     match cmd {
+        Cmd::Apply(lhs, rhs) => {
+            let val = eval_cmd(cache, *rhs)?;
+            apply(*lhs, &val)
+        }
         Cmd::Add(lhs, rhs) => eval_bin_fn(cache, *lhs, *rhs, json_add),
         Cmd::Append(_key, _arg) => {
             //let val = self.eval(*arg)?;
@@ -129,6 +133,7 @@ pub fn eval_cmd(cache: &mut Cache, cmd: Cmd) -> Res {
             let val = eval_cmd(cache, *arg)?;
             Ok(json_numsort(val, descend))
         }
+        Cmd::Has(key) => Ok(Json::Bool(cache.get(&key).is_some())),
     }
 }
 
@@ -142,7 +147,7 @@ pub fn pop(cache: &mut Cache, key: String) -> Result<Option<Json>, Error> {
     json_pop(val)
 }
 
-fn get_mut<'a>(cache: &'a mut Cache, key: String) -> Result<&'a mut Json, Error> {
+fn get_mut(cache: &mut Cache, key: String) -> Result<&mut Json, Error> {
     Ok(cache.get_mut(&key).ok_or(Error::BadKey(key))?)
 }
 
@@ -172,14 +177,18 @@ where
 }
 
 pub fn eval_filter(cmd: Cmd, val: &Json) -> Option<bool> {
-    if let Some(g) =  apply(cmd, val).ok() {
+    let r= apply(cmd.clone(), val).ok();
+    println!("eval_filter({:?},{:?})={:?}", cmd, val, r);
+    if let Some(g) = r {
         g.as_bool()
     } else {
         None
     }
 }
 
-pub fn eval_row_cmd(cmd: &Cmd, row: &JsonObj) -> Option<Json> {
+pub fn eval_row_cmd(cmd: Cmd, row: &Json) -> Option<Json> {
+    apply(cmd, row).ok()
+    /*
     match cmd {
         Cmd::Key(key) => row.get(key).cloned(),
         Cmd::Mul(lhs, rhs) => {
@@ -284,15 +293,17 @@ pub fn eval_row_cmd(cmd: &Cmd, row: &JsonObj) -> Option<Json> {
         Cmd::In(_, _) => unimplemented!(),
         Cmd::Flat(_) => unimplemented!(),
     }
+    */
 }
 
-pub fn eval_row_bin_cmd<F>(lhs: &Cmd, rhs: &Cmd, row: &JsonObj, f: F) -> Option<Json>
+pub fn eval_row_bin_cmd<F>(_lhs: &Cmd, _rhs: &Cmd, _row: &JsonObj, _f: F) -> Option<Json>
 where
     F: Fn(&Json, &Json) -> Option<Json>,
 {
-    let x = eval_row_cmd(lhs, row)?;
-    let y = eval_row_cmd(rhs, row)?;
-    f(&x, &y)
+    unimplemented!()
+    //let x = eval_row_cmd(lhs, row)?;
+    //let y = eval_row_cmd(rhs, row)?;
+    //f(&x, &y)
 }
 
 pub fn eval_nonaggregate(selects: &HashMap<String, Cmd>, rows: &[Json]) -> Result<Json, Error> {
@@ -301,8 +312,8 @@ pub fn eval_nonaggregate(selects: &HashMap<String, Cmd>, rows: &[Json]) -> Resul
         let mut obj = JsonObj::new();
         for (col_name, cmd) in selects {
             //eval_row(&mut obj, select, row)?;
-            if let Some(row) = row.as_object() {
-                if let Some(val) = eval_row_cmd(cmd, row) {
+            if let Some(_) = row.as_object() {
+                if let Some(val) = eval_row_cmd(cmd.clone(), row) {
                     obj.insert(col_name.to_string(), val);
                 }
             }
@@ -314,17 +325,17 @@ pub fn eval_nonaggregate(selects: &HashMap<String, Cmd>, rows: &[Json]) -> Resul
     Ok(Json::Array(out))
 }
 
-pub fn eval_reduce_bin_cmd<F>(lhs: &Cmd, rhs: &Cmd, rows: &[Json], f: F) -> Option<Json>
+pub fn eval_reduce_bin_cmd<F>(_lhs: &Cmd, _rhs: &Cmd, _rows: &[Json], _f: F) -> Option<Json>
 where
     F: FnOnce(&Json, &Json) -> Result<Json, Error>,
 {
-    let x = eval_rows_cmd(lhs, rows)?;
-    let y = eval_rows_cmd(rhs, rows)?;
-    Some(f(&x, &y).unwrap_or(Json::Null))
+    unimplemented!()
 }
 
 //TODO refactor to take Json val instead of rows to make more generic
-pub fn eval_rows_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
+pub fn eval_rows_cmd(cmd: Cmd, rows: &Json) -> Option<Json> {
+    apply(cmd, rows).ok()
+    /*
     match cmd {
         Cmd::Append(_, _) => None,
         Cmd::Get(key, arg) => {
@@ -402,6 +413,7 @@ pub fn eval_rows_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::In(_, _) => unimplemented!(),
         Cmd::NumSort(_, _) => unimplemented!(),
     }
+    */
 }
 
 #[cfg(test)]
@@ -418,6 +430,9 @@ mod tests {
             Box::new(Cmd::Key("nums".to_string())),
             Box::new(Cmd::Json(json!(3))),
         );
-        assert_eq!(Ok(json!([false, false, true, false, false])), eval_cmd(&mut cache, cmd));
+        assert_eq!(
+            Ok(json!([false, false, true, false, false])),
+            eval_cmd(&mut cache, cmd)
+        );
     }
 }
