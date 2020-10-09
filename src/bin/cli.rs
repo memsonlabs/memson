@@ -1,11 +1,11 @@
 use futures::{SinkExt, TryFutureExt};
+use memson::json::Json;
 use memson::Error;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
-use tokio::net::{TcpStream};
-use tokio_util::codec::{Framed, LinesCodec};
-use yansi::{Paint};
+use tokio::net::TcpStream;
 use tokio::stream::StreamExt;
+use tokio_util::codec::{Framed, LinesCodec};
 
 /// Entry point for CLI tool.
 ///
@@ -30,13 +30,9 @@ async fn main() -> memson::Result<()> {
     // Initialize the connection state. This allocates read/write buffers to
     // perform redis protocol frame parsing.
 
-    let mut lines =  Framed::new(socket, LinesCodec::new());
+    let mut lines = Framed::new(socket, LinesCodec::new());
     // Establish a connection
-    println!(
-        "\n🚀 connecting to memson on {}:{}",
-        Paint::blue(host),
-        Paint::blue(port)
-    );
+    println!("\n🚀 connecting to memson on {}:{}", host, port);
 
     let mut rl = Editor::<()>::new();
     if rl.load_history("history.txt").is_err() {
@@ -47,33 +43,33 @@ async fn main() -> memson::Result<()> {
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
-                println!("Line: {}", line);
                 lines.send(&line).map_err(|_| Error::BadIO).await?;
                 if let Some(result) = lines.next().await {
                     match result {
                         Ok(line) => {
-                            println!("{}", line);
+                            println!("line={:?}", line);
+                            let val: Json = serde_json::from_str(&line).unwrap();
+                            println!("{}", serde_json::to_string_pretty(&val).unwrap());
                         }
                         Err(e) => {
                             println!("error on decoding from socket; error = {:?}", e);
                         }
                     }
                 }
-            },
+            }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
-                break
-            },
+                break;
+            }
             Err(ReadlineError::Eof) => {
                 println!("CTRL-D");
-                break
-            },
+                break;
+            }
             Err(err) => {
                 println!("Error: {:?}", err);
-                break
+                break;
             }
         }
-
     }
     rl.save_history("history.txt").unwrap();
     /*

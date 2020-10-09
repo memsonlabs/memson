@@ -1,7 +1,7 @@
+use crate::err::Error;
 use crate::json::{Json, JsonObj};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeMap};
-use crate::err::Error;
+use std::collections::{BTreeMap, HashMap};
 
 pub type Cache = BTreeMap<String, Json>;
 
@@ -18,7 +18,7 @@ pub struct QueryCmd {
     pub by: Option<Box<Cmd>>,
     #[serde(rename = "where")]
     pub filter: Option<Json>,
-    #[serde(rename = "sortBy")]
+    #[serde(rename = "sort")]
     pub sort: Option<String>,
     pub descend: Option<bool>,
 }
@@ -115,71 +115,17 @@ pub enum Cmd {
     Or(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "map")]
     Map(Box<Cmd>, String),
-}
-
-impl Cmd {
-    pub fn is_read(&self) -> bool {
-        match self {
-            Cmd::Div(lhs, rhs)
-            | Cmd::Mul(lhs, rhs)
-            | Cmd::Bar(lhs, rhs)
-            | Cmd::Add(lhs, rhs)
-            | Cmd::Sub(lhs, rhs)
-            | Cmd::Eq(lhs, rhs)
-            | Cmd::NotEq(lhs, rhs)
-            | Cmd::Lt(lhs, rhs)
-            | Cmd::Gt(lhs, rhs)
-            | Cmd::Lte(lhs, rhs)
-            | Cmd::Gte(lhs, rhs)
-            | Cmd::And(lhs, rhs)
-            | Cmd::Or(lhs, rhs) => {
-                let x = lhs.is_read();
-                let y = rhs.is_read();
-                x && y
-            }
-            Cmd::Reverse(arg)
-            | Cmd::Median(arg)
-            | Cmd::Sort(arg, _)
-            | Cmd::SortBy(arg, _)
-            | Cmd::Last(arg)
-            | Cmd::First(arg)
-            | Cmd::Var(arg)
-            | Cmd::Max(arg)
-            | Cmd::Min(arg)
-            | Cmd::StdDev(arg)
-            | Cmd::Unique(arg)
-            | Cmd::ToString(arg)
-            | Cmd::Avg(arg)
-            | Cmd::Get(_, arg)
-            | Cmd::Sum(arg)
-            | Cmd::Map(arg, _) => arg.is_read(),
-            Cmd::Push(_, _)
-            | Cmd::Pop(_)
-            | Cmd::Delete(_)
-            | Cmd::Append(_, _)
-            | Cmd::Set(_, _)
-            | Cmd::Insert(_, _) => false,
-            Cmd::Key(_)
-            | Cmd::Json(_)
-            | Cmd::Summary
-            | Cmd::Keys(_)
-            | Cmd::Len(_)
-            | Cmd::Query(_) => true,
-            Cmd::Eval(cmds) => {
-                for cmd in cmds {
-                    if !cmd.is_read() {
-                        return false;
-                    }
-                }
-                true
-            }
-        }
-    }
+    #[serde(rename = "in")]
+    In(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "flat")]
+    Flat(Box<Cmd>),
+    #[serde(rename = "numSort")]
+    NumSort(Box<Cmd>, bool),
 }
 
 fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
-    where
-        F: FnOnce(Box<Cmd>, Box<Cmd>) -> Cmd,
+where
+    F: FnOnce(Box<Cmd>, Box<Cmd>) -> Cmd,
 {
     match arg {
         Json::Array(mut arr) => {
@@ -195,16 +141,16 @@ fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
 }
 
 fn parse_unr_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
-    where
-        F: FnOnce(Box<Cmd>) -> Cmd,
+where
+    F: FnOnce(Box<Cmd>) -> Cmd,
 {
     let val = Cmd::parse(arg)?;
     Ok(f(Box::new(val)))
 }
 
 fn parse_b_str_fn<F>(val: Json, f: F) -> Result<Cmd, Error>
-    where
-        F: FnOnce(String, Box<Cmd>) -> Cmd,
+where
+    F: FnOnce(String, Box<Cmd>) -> Cmd,
 {
     match val {
         Json::Array(mut arr) => {
@@ -253,12 +199,12 @@ fn parse_insert(val: Json) -> Result<Cmd, Error> {
 }
 
 fn parse_unr_str_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
-    where
-        F: FnOnce(String) -> Cmd,
+where
+    F: FnOnce(String) -> Cmd,
 {
     match arg {
         Json::String(s) => Ok(f(s)),
-        _ => Err(Error::BadKey),
+        val => Err(Error::BadArg(val)),
     }
 }
 
@@ -295,9 +241,12 @@ impl Cmd {
                         "key" => parse_unr_str_fn(val, Cmd::Key),
                         "last" => parse_unr_fn(val, Cmd::Last),
                         "len" => parse_unr_fn(val, Cmd::Len),
+                        "flat" => parse_unr_fn(val, Cmd::Flat),
                         "map" => {
                             let arr = val.as_array_mut().ok_or(Error::ExpectedArr)?;
-                            let f = arr.remove(1).as_str().ok_or(Error::BadArg)?.to_string();
+                            let val = arr.remove(1);
+                            let val_str = val.as_str().map(|x| x.to_string());
+                            let f = val_str.ok_or(Error::BadArg(val))?.to_string();
                             let arg = Cmd::parse(arr.remove(0))?;
                             Ok(Cmd::Map(Box::new(arg), f.to_string()))
                         }
@@ -437,5 +386,14 @@ fn cmd_parse_sort_ascend() {
     let val = json!({"sort": {"key": "k"}});
     let cmd = Cmd::parse(val.clone()).unwrap();
     let exp = Cmd::Sort(Box::new(Cmd::Key("k".to_string())), None);
+    assert_eq!(exp, cmd);
+}
+
+#[test]
+fn cmd_parse_map() {
+    use serde_json::json;
+    let val = json!({"map": [{"key": "k"}, "len"]});
+    let cmd = Cmd::parse(val.clone()).unwrap();
+    let exp = Cmd::Map(Box::new(Cmd::Key("k".to_string())), "len".to_string());
     assert_eq!(exp, cmd);
 }

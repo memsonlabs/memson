@@ -1,10 +1,12 @@
 use crate::err::Error;
 
-use rayon::prelude::*;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator, ParallelSliceMut};
 use serde_json::Number;
 pub use serde_json::{json, Map};
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
+
+
 
 pub fn null() -> Json {
     Json::Null
@@ -80,21 +82,28 @@ impl GtLt for Lt {
     }
 }
 
-pub fn json_eq(x: &Json, y: &Json) -> bool {
-    x == y
-}
-
-pub fn json_or(x: &Json, y: &Json) -> bool {
-    match (x, y) {
-        (Json::Bool(x), Json::Bool(y)) => *x || *y,
-        _ => false,
+pub fn json_eq(x: &Json, y: &Json) -> Json {
+    match x {
+        Json::Array(arr) => Json::Array(arr.iter().map(|x| Json::Bool(x == y)).collect()),
+        x => Json::from(json_equal(x, y)),
     }
 }
 
-pub fn json_and(x: &Json, y: &Json) -> bool {
+pub fn json_equal(x: &Json, y: &Json) -> bool {
+    x == y
+}
+
+pub fn json_or(x: &Json, y: &Json) -> Json {
     match (x, y) {
-        (Json::Bool(x), Json::Bool(y)) => *x && *y,
-        _ => false,
+        (Json::Bool(x), Json::Bool(y)) => Json::from(*x || *y),
+        _ => unimplemented!(),
+    }
+}
+
+pub fn json_and(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Bool(x), Json::Bool(y)) => Json::from(*x && *y),
+        _ => unimplemented!(),
     }
 }
 
@@ -123,6 +132,81 @@ fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> b
             p(&cmp)
         }
         _ => false,
+    }
+}
+
+pub fn noteq(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(lhs), Json::Array(rhs)) => {
+            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_neq(x, y)).map(Json::Bool).collect();
+            Json::Array(v)
+        }
+        (Json::Array(lhs), y) => {
+            Json::Array(lhs.iter().map(|x| json_neq(x, y)).map(Json::Bool).collect())
+        }
+        (x,y) => {
+            Json::Bool(json_neq(x, y))
+        }
+    }
+}
+
+pub fn gt(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(lhs), Json::Array(rhs)) => {
+            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_gt(x, y)).map(Json::Bool).collect();
+            Json::Array(v)
+        }
+        (Json::Array(lhs), y) => {
+            Json::Array(lhs.iter().map(|x| json_gt(x, y)).map(Json::Bool).collect())
+        }
+        (x,y) => {
+            Json::Bool(json_gt(x, y))
+        }
+    }
+}
+
+pub fn gte(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(lhs), Json::Array(rhs)) => {
+            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_gte(x, y)).map(Json::Bool).collect();
+            Json::Array(v)
+        }
+        (Json::Array(lhs), y) => {
+            Json::Array(lhs.iter().map(|x| json_gte(x, y)).map(Json::Bool).collect())
+        }
+        (x,y) => {
+            Json::Bool(json_gte(x, y))
+        }
+    }
+}
+
+pub fn lte(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(lhs), Json::Array(rhs)) => {
+            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_lte(x, y)).map(Json::Bool).collect();
+            Json::Array(v)
+        }
+        (Json::Array(lhs), y) => {
+            Json::Array(lhs.iter().map(|x| json_lte(x, y)).map(Json::Bool).collect())
+        }
+        (x,y) => {
+            Json::Bool(json_lte(x, y))
+        }
+    }
+}
+
+pub fn lt(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(lhs), Json::Array(rhs)) => {
+            let v = lhs.iter().zip(rhs.iter()).map(|(x, y)| json_lt(x, y)).map(Json::Bool).collect();
+            Json::Array(v)
+        }
+        (Json::Array(lhs), y) => {
+            Json::Array(lhs.iter().map(|x| json_lt(x, y)).map(Json::Bool).collect())
+        }
+        (x,y) => {
+            Json::Bool(json_lt(x, y))
+        }
     }
 }
 
@@ -175,6 +259,7 @@ pub fn json_append(val: &mut Json, elem: Json) {
     }
 }
 
+//TODO refactor arg from ref to val
 pub fn json_first(val: &Json) -> Json {
     match val {
         Json::Array(ref arr) if !arr.is_empty() => arr[0].clone(),
@@ -696,11 +781,76 @@ pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     }
 }
 
-fn map(f: &str) -> Option<fn(&Json) -> Result<Json,Error>> {
+fn map(f: &str) -> Option<fn(&Json) -> Result<Json, Error>> {
     match f {
         "max" => Some(|x| Ok(json_max(x).clone())),
         "min" => Some(|x| Ok(json_min(x).clone())),
+        "len" => Some(|x| Ok(Json::from(json_count(x)))),
         _ => unimplemented!(),
+    }
+}
+
+pub fn numsort(mut val: Json, descend: bool) -> Json {
+    unimplemented!()
+}
+
+
+pub fn json_in(lhs: &Json, rhs: &Json) -> Json {
+    if let Json::Array(arr) = lhs {
+        Json::Array(arr.iter().map(|x| Json::Bool(x == rhs)).collect())
+    } else {
+        Json::Bool(lhs == rhs)
+    }
+}
+
+pub fn json_merge(x: &Json, y: &Json) -> Json {
+    let mut out = Vec::new();
+    json_arr_merge(x, &mut out);
+    json_arr_merge(y, &mut out);
+    Json::Array(out)
+}
+
+fn json_arr_merge(val: &Json, out: &mut Vec<Json>) {
+    match val {
+        Json::Array(arr) => {
+            for val in arr {
+                match val {
+                    Json::Array(arr) => {
+                        for val in arr {
+                            out.push(val.clone());
+                        }
+                    }
+                    val => out.push(val.clone()),
+                }
+            }
+        }
+        val => out.push(val.clone()),
+    };
+}
+
+pub fn json_flat(val: Json) -> Json {
+    match val {
+        Json::Array(arr) => {
+            let mut out = Vec::new();
+            for val in arr {
+                match val {
+                    Json::Array(arr) => out.extend(arr),
+                    val => out.push(val),
+                }
+            }
+            Json::Array(out)
+        }
+        val => val,
+    }
+}
+
+pub fn json_numsort(val: Json, _descend: bool) -> Json {
+    match val {
+        Json::Array(mut arr) => {
+            arr.sort_by_key(|x| x.as_i64());
+            Json::Array(arr)
+        }
+        val => val,
     }
 }
 
@@ -728,14 +878,6 @@ pub fn json_sortby(_val: &mut Json, _key: &str) {
     todo!("work out how to handle non existing entries")
 }
 
-fn gt(x: &Json, y: &Json) -> bool {
-    match (x, y) {
-        (Json::Number(x), Json::Number(y)) => num_gt(x, y),
-        (Json::String(x), Json::String(y)) => x > y,
-        _ => unimplemented!(),
-    }
-}
-
 fn num_gt(x: &Number, y: &Number) -> bool {
     match (x.as_i64(), y.as_i64()) {
         (Some(x), Some(y)) => x > y,
@@ -746,7 +888,7 @@ fn num_gt(x: &Number, y: &Number) -> bool {
 pub fn json_ord(x: &Json, y: &Json) -> Ordering {
     if x == y {
         Ordering::Equal
-    } else if gt(x, y) {
+    } else if json_gt(x, y) {
         Ordering::Greater
     } else {
         Ordering::Less
@@ -756,7 +898,7 @@ pub fn json_ord(x: &Json, y: &Json) -> Ordering {
 pub fn json_desc_ord(x: &Json, y: &Json) -> Ordering {
     if x == y {
         Ordering::Equal
-    } else if gt(x, y) {
+    } else if json_gt(x, y) {
         Ordering::Less
     } else {
         Ordering::Greater

@@ -1,31 +1,31 @@
+use crate::Json;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
     BadType,
     BadCmd,
-    BadKey,
+    BadKey(String),
     ExpectedArr,
     BadFrom,
     Serialize,
     BadGroupBy,
     BadIO,
-    BadArg,
+    BadArg(Json),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let msg = match self {
-            Error::BadCmd => "bad cmd",
-            Error::BadType => "incorrect type",
-            Error::BadKey => "bad key",
-            Error::ExpectedArr => "expected json array",
-            Error::BadFrom => "bad from",
-            Error::Serialize => "bad serialization",
-            Error::BadGroupBy => "bad group by",
-            Error::BadIO => "bad io",
-            Error::BadArg => "bad argument",
-        };
-        write!(f, "{}", "error: ".to_string() + msg)
+        match self {
+            Error::BadCmd => write!(f, "{}", "bad cmd"),
+            Error::BadType => write!(f, "{}", "incorrect type"),
+            Error::BadKey(key) => write!(f, "bad key: {}", &key),
+            Error::ExpectedArr => write!(f, "{}", "expected json array"),
+            Error::BadFrom => write!(f, "{}", "bad from"),
+            Error::Serialize => write!(f, "{}", "bad serialization"),
+            Error::BadGroupBy => write!(f, "{}", "bad group by"),
+            Error::BadIO => write!(f, "{}", "bad io"),
+            Error::BadArg(msg) => write!(f, "{} is a bad argument", msg),
+        }
     }
 }

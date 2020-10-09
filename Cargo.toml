@@ -13,14 +13,13 @@ name = "memson-server"
 path = "src/bin/server.rs"
 
 [dependencies]
-futures = "*"
-rayon = "*"
+futures = "0.3"
+rayon = "1.*"
 rustyline = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
 tokio = { version = "*", features = ["full"] }
-tokio-util = { version = "*", features = ["full"] }
-yansi = "*"
+tokio-util = { version = "*", features = ["codec"] }
 
 [dev-dependencies]
 assert_approx_eq = "*"

@@ -41,20 +41,21 @@
 
 #![warn(rust_2018_idioms)]
 
-use tokio::net::{TcpListener};
+use tokio::net::TcpListener;
 use tokio::stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
-use std::env;
+use futures::SinkExt;
+use memson::cmd::Cmd;
 use memson::db::InMemDb;
 use memson::json::Json;
+use serde_json::json;
+use std::env;
+use std::fs::File;
+use std::io::Read;
 use tokio::io;
 use tokio::sync::mpsc;
-use memson::cmd::Cmd;
 use tokio::sync::oneshot;
-use futures::SinkExt;
-use std::io::Read;
-use std::fs::File;
 
 fn read_json_from_file(path: &str) -> io::Result<Json> {
     let mut f = File::open(path)?;
@@ -106,7 +107,7 @@ async fn main() -> io::Result<()> {
             println!("{:?}", cmd);
             let val = match db.eval(cmd) {
                 Ok(val) => val.to_string(),
-                Err(err) => err.to_string(),
+                Err(err) => json!({"error": err.to_string()}).to_string(),
             };
             println!("val={:?}", val);
             if let Err(err) = req.resp.send(val) {
@@ -132,8 +133,6 @@ async fn main() -> io::Result<()> {
                     // to convert our stream of bytes, `socket`, into a `Stream` of lines
                     // as well as convert our line based responses into a stream of bytes.
 
-
-
                     let mut lines = Framed::new(socket, LinesCodec::new());
 
                     // Here for every line we get back from the `Framed` decoder,
@@ -151,9 +150,9 @@ async fn main() -> io::Result<()> {
                                 }
                                 let s = match qrx.await {
                                     Ok(cmd) => cmd,
-                                    Err(err) => err.to_string(),
+                                    Err(err) => json!({"error": err.to_string()}).to_string(),
                                 };
-	    			println!("s={:?}", s);
+                                println!("s={:?}", s);
                                 if let Err(err) = lines.send(s).await {
                                     eprintln!("{:?}", err);
                                 }

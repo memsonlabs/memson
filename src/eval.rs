@@ -1,16 +1,16 @@
-use crate::cmd::{Cache, Cmd, QueryCmd, Query};
+use crate::cmd::{Cache, Cmd, Query, QueryCmd};
 use crate::json::*;
 use crate::Error;
+use crate::Res;
 use core::option::Option::Some;
 use std::collections::HashMap;
+use crate::apply::apply;
 
 fn eval_sort_cmd(cache: &mut Cache, arg: Cmd) -> Res {
     let mut val = eval_cmd(cache, arg)?;
     json_sort_ascend(&mut val);
     Ok(val)
 }
-
-pub type Res = Result<Json, Error>;
 
 fn set<K: Into<String>>(cache: &mut Cache, key: K, val: Json) -> Option<Json> {
     cache.insert(key.into(), val)
@@ -39,7 +39,7 @@ pub fn eval_cmd(cache: &mut Cache, cmd: Cmd) -> Res {
             Ok(json_get(&key, &val).unwrap_or(Json::Null))
         }
         Cmd::Insert(key, arg) => {
-            let val = get_mut(cache, &key)?;
+            let val = get_mut(cache, key)?;
             let n = arg.len();
             json_insert(val, arg);
             Ok(Json::from(n))
@@ -48,17 +48,16 @@ pub fn eval_cmd(cache: &mut Cache, cmd: Cmd) -> Res {
         Cmd::Keys(_page) => unimplemented!(),
         Cmd::Last(arg) => eval_unr_fn(cache, *arg, |x| Ok(json_last(x))),
         Cmd::Max(arg) => eval_unr_fn_ref(cache, *arg, json_max),
+        Cmd::In(lhs, rhs) => eval_bin_fn(cache, *lhs, *rhs, |x, y| Ok(Json::from(json_in(x, y)))),
         Cmd::Min(arg) => eval_unr_fn_ref(cache, *arg, json_min),
         Cmd::Mul(lhs, rhs) => eval_bin_fn(cache, *lhs, *rhs, json_mul),
         Cmd::Push(key, arg) => {
             let val = eval_cmd(cache, *arg)?;
-            let kv = cache.get_mut(&key).ok_or(Error::BadKey)?;
+            let kv = cache.get_mut(&key).ok_or(Error::BadKey(key))?;
             json_push(kv, val);
             Ok(Json::Null)
         }
-        Cmd::Pop(key) => {
-            Ok(pop(cache, &key)?.unwrap_or(Json::Null))
-        }
+        Cmd::Pop(key) => Ok(pop(cache, key)?.unwrap_or(Json::Null)),
         Cmd::Query(cmd) => query(cache, cmd),
         Cmd::Set(key, arg) => {
             let val = eval_cmd(cache, *arg)?;
@@ -72,7 +71,33 @@ pub fn eval_cmd(cache: &mut Cache, cmd: Cmd) -> Res {
         Cmd::Unique(arg) => eval_unr_fn(cache, *arg, unique),
         Cmd::Var(arg) => eval_unr_fn(cache, *arg, json_var),
         Cmd::ToString(arg) => Ok(eval_cmd(cache, *arg)?),
-        Cmd::Key(key) => Ok(cache.get(&key).cloned().ok_or(Error::BadKey)?),
+        Cmd::Key(key) => {
+            let mut it = key.split('.');
+            let key = it.next().ok_or(Error::BadKey(key.clone()))?;
+            let mut ref_val = cache.get(key).ok_or(Error::BadKey(key.to_string()))?;
+            let mut fat_val = None;
+            for key in it {
+                match ref_val {
+                    Json::Array(arr) => {
+                        let mut out = Vec::new();
+                        for val in arr {
+                            if let Some(val) = val.get(key) {
+                                out.push(val.clone());
+                            }
+                        }
+                        fat_val = Some(out);
+                    }
+                    val => {
+                        ref_val = val.get(key).ok_or(Error::BadKey(key.to_string()))?;
+                    }
+                }
+            }
+            Ok(if let Some(val) = fat_val {
+                Json::Array(val)
+            } else {
+                ref_val.clone()
+            })
+        }
         Cmd::Reverse(arg) => {
             let mut val = eval_cmd(cache, *arg)?;
             json_reverse(&mut val);
@@ -96,6 +121,14 @@ pub fn eval_cmd(cache: &mut Cache, cmd: Cmd) -> Res {
             let val = eval_cmd(cache, *arg)?;
             json_map(&val, f)
         }
+        Cmd::Flat(arg) => {
+            let val = eval_cmd(cache, *arg)?;
+            Ok(json_flat(val))
+        }
+        Cmd::NumSort(arg, descend) => {
+            let val = eval_cmd(cache, *arg)?;
+            Ok(json_numsort(val, descend))
+        }
     }
 }
 
@@ -104,18 +137,18 @@ fn query(cache: &Cache, cmd: QueryCmd) -> Res {
     qry.exec()
 }
 
-pub fn pop(cache: &mut Cache, key: &str) -> Result<Option<Json>, Error> {
+pub fn pop(cache: &mut Cache, key: String) -> Result<Option<Json>, Error> {
     let val = get_mut(cache, key)?;
     json_pop(val)
 }
 
-fn get_mut<'a>(cache: &'a mut Cache, key: &str) -> Result<&'a mut Json, Error> {
-    Ok(cache.get_mut(key).ok_or(Error::BadKey)?)
+fn get_mut<'a>(cache: &'a mut Cache, key: String) -> Result<&'a mut Json, Error> {
+    Ok(cache.get_mut(&key).ok_or(Error::BadKey(key))?)
 }
 
 fn eval_bin_fn<F>(cache: &mut Cache, lhs: Cmd, rhs: Cmd, f: F) -> Res
-    where
-        F: Fn(&Json, &Json) -> Result<Json, Error>,
+where
+    F: Fn(&Json, &Json) -> Result<Json, Error>,
 {
     let x = eval_cmd(cache, lhs)?;
     let y = eval_cmd(cache, rhs)?;
@@ -123,100 +156,27 @@ fn eval_bin_fn<F>(cache: &mut Cache, lhs: Cmd, rhs: Cmd, f: F) -> Res
 }
 
 fn eval_unr_fn<F>(cache: &mut Cache, arg: Cmd, f: F) -> Res
-    where
-        F: Fn(&Json) -> Result<Json, Error>,
+where
+    F: Fn(&Json) -> Result<Json, Error>,
 {
     let val = eval_cmd(cache, arg)?;
     f(&val)
 }
 
 fn eval_unr_fn_ref<F>(cache: &mut Cache, arg: Cmd, f: F) -> Res
-    where
-        F: Fn(&Json) -> &Json,
+where
+    F: Fn(&Json) -> &Json,
 {
     let val = eval_cmd(cache, arg)?;
     Ok(f(&val).clone())
 }
 
-pub fn eval_filter(cmd: &Cmd, obj: &JsonObj) -> Option<bool> {
-    let flag = match cmd {
-        Cmd::Key(key) => obj.get(key).is_some(),
-        Cmd::Eq(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_eq(&lhs_val, &rhs_val)
-        }
-        Cmd::Gt(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_gt(&lhs_val, &rhs_val)
-        }
-        Cmd::Lt(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_lt(&lhs_val, &rhs_val)
-        }
-
-        Cmd::Append(_, _) => unimplemented!(),
-        Cmd::Bar(_, _) => unimplemented!(),
-        Cmd::Set(_, _) => unimplemented!(),
-        Cmd::Max(_) => unimplemented!(),
-        Cmd::Min(_) => unimplemented!(),
-        Cmd::Avg(_) => unimplemented!(),
-        Cmd::Delete(_) => unimplemented!(),
-        Cmd::StdDev(_) => unimplemented!(),
-        Cmd::Sum(_) => unimplemented!(),
-        Cmd::Add(_, _) => unimplemented!(),
-        Cmd::Sub(_, _) => unimplemented!(),
-        Cmd::Mul(_, _) => unimplemented!(),
-        Cmd::Div(_, _) => unimplemented!(),
-        Cmd::First(_) => unimplemented!(),
-        Cmd::Last(_) => unimplemented!(),
-        Cmd::Var(_) => unimplemented!(),
-        Cmd::Push(_, _) => unimplemented!(),
-        Cmd::Pop(_) => unimplemented!(),
-        Cmd::Query(_) => unimplemented!(),
-        Cmd::Insert(_, _) => unimplemented!(),
-        Cmd::Keys(_) => unimplemented!(),
-        Cmd::Len(_) => unimplemented!(),
-        Cmd::Unique(_) => unimplemented!(),
-        Cmd::Json(_) => unimplemented!(),
-        Cmd::Summary => unimplemented!(),
-        Cmd::Get(_, _) => unimplemented!(),
-        Cmd::ToString(_) => unimplemented!(),
-        Cmd::Sort(_, _) => unimplemented!(),
-        Cmd::Reverse(_) => unimplemented!(),
-        Cmd::SortBy(_, _) => unimplemented!(),
-        Cmd::Median(_) => unimplemented!(),
-        Cmd::Eval(_) => unimplemented!(),
-        Cmd::Map(_, _) => unimplemented!(),
-        Cmd::NotEq(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_neq(&lhs_val, &rhs_val)
-        }
-        Cmd::Gte(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_gte(&lhs_val, &rhs_val)
-        }
-        Cmd::Lte(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_lte(&lhs_val, &rhs_val)
-        }
-        Cmd::And(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_and(&lhs_val, &rhs_val)
-        }
-        Cmd::Or(lhs, rhs) => {
-            let lhs_val = eval_row_cmd(lhs, obj)?;
-            let rhs_val = eval_row_cmd(rhs, obj)?;
-            json_or(&lhs_val, &rhs_val)
-        }
-    };
-    Some(flag)
+pub fn eval_filter(cmd: Cmd, val: &Json) -> Option<bool> {
+    if let Some(g) =  apply(cmd, val).ok() {
+        g.as_bool()
+    } else {
+        None
+    }
 }
 
 pub fn eval_row_cmd(cmd: &Cmd, row: &JsonObj) -> Option<Json> {
@@ -282,7 +242,7 @@ pub fn eval_row_cmd(cmd: &Cmd, row: &JsonObj) -> Option<Json> {
         Cmd::Eq(lhs, rhs) => {
             let x = eval_row_cmd(lhs, row)?;
             let y = eval_row_cmd(rhs, row)?;
-            Some(Json::from(json_eq(&x, &y)))
+            Some(Json::from(json_equal(&x, &y)))
         }
         Cmd::NotEq(lhs, rhs) => {
             let x = eval_row_cmd(lhs, row)?;
@@ -319,14 +279,16 @@ pub fn eval_row_cmd(cmd: &Cmd, row: &JsonObj) -> Option<Json> {
             let y = eval_row_cmd(rhs, row)?;
             Some(Json::from(json_or(&x, &y)))
         }
+        Cmd::NumSort(_, _) => unimplemented!(),
         Cmd::Map(_, _) => unimplemented!(),
+        Cmd::In(_, _) => unimplemented!(),
+        Cmd::Flat(_) => unimplemented!(),
     }
 }
 
-
 pub fn eval_row_bin_cmd<F>(lhs: &Cmd, rhs: &Cmd, row: &JsonObj, f: F) -> Option<Json>
-    where
-        F: Fn(&Json, &Json) -> Option<Json>,
+where
+    F: Fn(&Json, &Json) -> Option<Json>,
 {
     let x = eval_row_cmd(lhs, row)?;
     let y = eval_row_cmd(rhs, row)?;
@@ -352,21 +314,21 @@ pub fn eval_nonaggregate(selects: &HashMap<String, Cmd>, rows: &[Json]) -> Resul
     Ok(Json::Array(out))
 }
 
-
 pub fn eval_reduce_bin_cmd<F>(lhs: &Cmd, rhs: &Cmd, rows: &[Json], f: F) -> Option<Json>
-    where
-        F: FnOnce(&Json, &Json) -> Result<Json, Error>,
+where
+    F: FnOnce(&Json, &Json) -> Result<Json, Error>,
 {
-    let x = eval_reduce_cmd(lhs, rows)?;
-    let y = eval_reduce_cmd(rhs, rows)?;
+    let x = eval_rows_cmd(lhs, rows)?;
+    let y = eval_rows_cmd(rhs, rows)?;
     Some(f(&x, &y).unwrap_or(Json::Null))
 }
 
-pub fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
+//TODO refactor to take Json val instead of rows to make more generic
+pub fn eval_rows_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
     match cmd {
         Cmd::Append(_, _) => None,
         Cmd::Get(key, arg) => {
-            if let Some(val) = eval_reduce_cmd(arg.as_ref(), rows) {
+            if let Some(val) = eval_rows_cmd(arg.as_ref(), rows) {
                 json_get(key, &val) //TODO remove cloned
             } else {
                 None
@@ -385,36 +347,30 @@ pub fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
                 Some(Json::from(output))
             }
         }
-        Cmd::First(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_first(&x)),
-        Cmd::Last(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_last(&x)),
-        Cmd::Sum(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_sum(&x)),
-        Cmd::Len(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_count(&x)),
-        Cmd::Min(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_min(&x).clone()),
-        Cmd::Max(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_max(&x).clone()),
-        Cmd::Avg(arg) => {
-            let val = eval_reduce_cmd(arg.as_ref(), rows);
-            if let Some(ref val) = val {
-                json_avg(val).ok()
-            } else {
-                None
-            }
-        }
+        Cmd::First(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_first(&x)),
+        Cmd::Last(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_last(&x)),
+        Cmd::Sum(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_sum(&x)),
+        Cmd::Len(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_count(&x)),
+        Cmd::Min(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_min(&x).clone()),
+        Cmd::Max(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_max(&x).clone()),
+        Cmd::Flat(arg) => eval_rows_cmd(arg.as_ref(), rows).map(json_flat),
+        Cmd::Avg(arg) => json_avg(&eval_rows_cmd(arg.as_ref(), rows)?).ok(),
         Cmd::Var(arg) => {
-            if let Some(ref arg) = eval_reduce_cmd(arg.as_ref(), rows) {
+            if let Some(ref arg) = eval_rows_cmd(arg.as_ref(), rows) {
                 json_var(arg).ok()
             } else {
                 None
             }
         }
         Cmd::StdDev(arg) => {
-            if let Some(ref arg) = eval_reduce_cmd(arg.as_ref(), rows) {
+            if let Some(ref arg) = eval_rows_cmd(arg.as_ref(), rows) {
                 json_dev(arg).ok()
             } else {
                 None
             }
         }
         Cmd::Json(val) => Some(val.clone()),
-        Cmd::Unique(arg) => eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_unique(&x)),
+        Cmd::Unique(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_unique(&x)),
         Cmd::Bar(lhs, rhs) => eval_reduce_bin_cmd(lhs, rhs, rows, json_bar),
         Cmd::Add(lhs, rhs) => eval_reduce_bin_cmd(lhs, rhs, rows, json_add),
         Cmd::Sub(lhs, rhs) => eval_reduce_bin_cmd(lhs, rhs, rows, json_sub),
@@ -428,9 +384,7 @@ pub fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::Push(_, _) => None,
         Cmd::Keys(_) => None,
         Cmd::Summary => None,
-        Cmd::ToString(arg) => {
-            eval_reduce_cmd(arg.as_ref(), rows).map(|x| json_string(&x))
-        }
+        Cmd::ToString(arg) => eval_rows_cmd(arg.as_ref(), rows).map(|x| json_string(&x)),
         Cmd::Sort(_, _) => unimplemented!(),
         Cmd::Median(_) => unimplemented!(),
         Cmd::SortBy(_, _) => unimplemented!(),
@@ -445,6 +399,25 @@ pub fn eval_reduce_cmd(cmd: &Cmd, rows: &[Json]) -> Option<Json> {
         Cmd::And(_, _) => unimplemented!(),
         Cmd::Or(_, _) => unimplemented!(),
         Cmd::Map(_, _) => unimplemented!(),
+        Cmd::In(_, _) => unimplemented!(),
+        Cmd::NumSort(_, _) => unimplemented!(),
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use serde_json::json;
+
+    #[test]
+    fn eval_in() {
+        let mut cache = Cache::new();
+        cache.insert("nums".to_string(), json!([1, 2, 3, 4, 5]));
+        let cmd = Cmd::In(
+            Box::new(Cmd::Key("nums".to_string())),
+            Box::new(Cmd::Json(json!(3))),
+        );
+        assert_eq!(Ok(json!([false, false, true, false, false])), eval_cmd(&mut cache, cmd));
+    }
+}

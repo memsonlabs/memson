@@ -77,11 +77,16 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 /// This is defined as a convenience.
 
 */
-pub mod db;
+
+pub mod apply;
 pub mod cmd;
+pub mod db;
 pub mod err;
 pub use err::Error;
 pub mod eval;
 pub mod json;
 pub type Result<T> = std::result::Result<T, err::Error>;
 pub const DEFAULT_PORT: &str = "8888";
+
+use crate::json::Json;
+type Res = Result<Json>;

@@ -1,17 +1,18 @@
-use crate::cmd::{Cmd, Query, QueryCmd, Cache};
+use crate::cmd::{Cache, Cmd, Query, QueryCmd};
 use crate::err::Error;
+use crate::eval::*;
 use crate::json::*;
+use crate::Res;
 use rayon::prelude::*;
 use serde_json::{Value as Json, Value};
 use std::collections::HashMap;
-use crate::eval::*;
 
 enum Rows<'a> {
     Val(Vec<Json>),
     Ref(&'a [Json]),
 }
 
-impl <'a> Rows<'a> {
+impl<'a> Rows<'a> {
     fn as_slice(&self) -> &[Json] {
         match self {
             Rows::Val(vec) => vec.as_slice(),
@@ -26,27 +27,26 @@ pub struct InMemDb {
 }
 
 impl InMemDb {
-
-    fn key(&self, key: &str) -> Result<Json, Error> {
-        self.cache.get(key).cloned().ok_or(Error::BadKey)
+    fn key(&self, key: String) -> Result<Json, Error> {
+        self.cache.get(&key).cloned().ok_or(Error::BadKey(key))
     }
 
     //TODO remove allocations
-    pub fn eval_key<'a>(&'a self, key: &str) -> Res {
+    pub fn eval_key<'a>(&'a self, key: String) -> Res {
         let mut it = key.split('.');
-        let key = it.next().ok_or(Error::BadKey)?;
-        let mut val = self.key(key)?.clone();
+        let key = it.next().ok_or(Error::BadKey(key.clone()))?;
+        let mut val = self.key(key.to_string())?.clone();
         for key in it {
             if let Some(v) = json_get(key, &val) {
                 val = v;
             } else {
-                return Err(Error::BadKey);
+                return Err(Error::BadKey(key.to_string()));
             }
         }
         Ok(val)
     }
 
-    pub fn set<K:Into<String>>(&mut self, key: K, val: Json) {
+    pub fn set<K: Into<String>>(&mut self, key: K, val: Json) {
         self.cache.insert(key.into(), val);
     }
 
@@ -73,7 +73,6 @@ impl InMemDb {
     }
 }
 
-
 fn has_aggregation(selects: &HashMap<String, Cmd>) -> bool {
     for (_, cmd) in selects.iter() {
         if !cmd.is_aggregate() {
@@ -96,7 +95,7 @@ fn merge_grouping(
 
 fn eval_sortby(rows: &[Json], key: &str, descend: bool) -> Vec<Json> {
     let mut r = rows.to_vec();
-    if descend  {
+    if descend {
         r.par_sort_by(|x, y| sortby_desc_key(key, x, y));
     } else {
         r.par_sort_by(|x, y| sortby_key(key, x, y));
@@ -132,12 +131,8 @@ impl<'a> Query<'a> {
                 let cmd = Cmd::parse(filter.clone())?;
                 Rows::Val(self.eval_where(rows, &cmd)?)
             }
-            (None, Some(key)) => {
-                Rows::Val(eval_sortby(rows, key, descend))
-            }
-            (None, None) => {
-                Rows::Ref(rows)
-            }
+            (None, Some(key)) => Rows::Val(eval_sortby(rows, key, descend)),
+            (None, None) => Rows::Ref(rows),
         };
         Ok(rows)
     }
@@ -168,7 +163,7 @@ impl<'a> Query<'a> {
         for (key, keyed_rows) in grouping {
             let mut obj = JsonObj::new();
             for (col, cmd) in selects {
-                if let Some(v) = eval_reduce_cmd(cmd, &keyed_rows) {
+                if let Some(v) = eval_rows_cmd(cmd, &keyed_rows) {
                     obj.insert(col.to_string(), v);
                 }
             }
@@ -208,7 +203,7 @@ impl<'a> Query<'a> {
         let mut filtered_rows = Vec::new();
         for row in rows {
             if let Some(obj) = row.as_object() {
-                if let Some(true) = eval_filter(filter, obj) {
+                if let Some(true) = eval_filter(filter.clone(), row) {
                     filtered_rows.push(Json::from(obj.clone()));
                 }
             }
@@ -253,7 +248,7 @@ impl<'a> Query<'a> {
 }
 
 fn reduce_select(select: (&String, &Cmd), rows: &[Json], output: &mut JsonObj) {
-    if let Some(val) = eval_reduce_cmd(select.1, rows) {
+    if let Some(val) = eval_rows_cmd(select.1, rows) {
         output.insert(select.0.to_string(), val);
     }
 }
@@ -272,7 +267,6 @@ mod tests {
     use assert_approx_eq::assert_approx_eq;
 
     use serde_json::json;
-    use std::rc::Rc;
 
     fn set<K: Into<String>>(key: K, arg: Cmd) -> Cmd {
         Cmd::Set(key.into(), b(arg))
@@ -345,12 +339,22 @@ mod tests {
         db.eval(cmd)
     }
 
+    fn orders_val() -> Json {
+        json!([
+                { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+                { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+                { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+                { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+                { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
+        ])
+    }
+
     fn insert_entry(cache: &mut Cache, key: &str, val: Json) {
-        cache.insert(key.to_string(), Rc::new(val));
+        cache.insert(key.to_string(), val);
     }
 
     fn insert_data(cache: &mut Cache) {
-        insert_entry(cache,"a", json!([1, 2, 3, 4, 5]));
+        insert_entry(cache, "a", json!([1, 2, 3, 4, 5]));
         insert_entry(cache, "b", json!(true));
         insert_entry(cache, "i", json!(2));
         insert_entry(cache, "f", json!(3.3));
@@ -361,17 +365,7 @@ mod tests {
         insert_entry(cache, "s", json!("hello"));
         insert_entry(cache, "sa", json!(["a", "b", "c", "d"]));
         insert_entry(cache, "t", table_data());
-        insert_entry(
-            cache,
-            "orders",
-            json!([
-                    { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
-                    { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
-                    { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
-                    { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
-                    { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
-            ])
-        );
+        insert_entry(cache, "orders", orders_val());
     }
 
     #[test]
@@ -946,7 +940,7 @@ mod tests {
 
     #[test]
     fn eval_get_string_err_not_found() {
-        assert_eq!(Err(Error::BadKey), eval(key("ania")));
+        assert_eq!(Err(Error::BadKey("ania".to_string())), eval(key("ania")));
     }
 
     #[test]
@@ -962,7 +956,9 @@ mod tests {
     }
 
     fn test_db() -> InMemDb {
-        InMemDb { cache: test_cache() }
+        InMemDb {
+            cache: test_cache(),
+        }
     }
 
     fn query(json: Json) -> Result<Json, Error> {
@@ -1505,7 +1501,7 @@ mod tests {
     fn select_all_sort_by_name() {
         let qry = query(json!({
             "from": "orders",
-            "sortBy": "customer",
+            "sort": "customer",
         }));
         assert_eq!(
             Ok(json!([
@@ -1523,7 +1519,7 @@ mod tests {
     fn select_all_sort_by_qty() {
         let qry = query(json!({
             "from": "orders",
-            "sortBy": "qty",
+            "sort": "qty",
         }));
         assert_eq!(
             Ok(json!([
@@ -1559,7 +1555,7 @@ mod tests {
     fn select_all_sort_by_time_desc() {
         let qry = query(json!({
             "from": "orders",
-            "sortBy": "time",
+            "sort": "time",
             "descend": true,
         }));
         assert_eq!(
@@ -1578,7 +1574,7 @@ mod tests {
     fn select_all_sort_by_price() {
         let qry = query(json!({
             "from": "orders",
-            "sortBy": "price",
+            "sort": "price",
         }));
         assert_eq!(
             Ok(json!([
@@ -1596,7 +1592,7 @@ mod tests {
     fn select_all_sort_by_discount() {
         let qry = query(json!({
             "from": "orders",
-            "sortBy": "discount",
+            "sort": "discount",
         }));
         assert_eq!(
             Ok(json!([
@@ -1749,9 +1745,20 @@ mod tests {
 
     #[test]
     fn eval_filter_ok() {
-        let cmd = Cmd::Gt(Box::new(Cmd::Key("age".to_string())), Box::new(Cmd::Json(Json::from(2))));
-        let obj = json!({"age": 3});
-        assert_eq!(Some(true), eval_filter(&cmd, obj.as_object().unwrap()));
+        let cmd = Cmd::Gt(
+            Box::new(Cmd::Key("age".to_string())),
+            Box::new(Cmd::Json(Json::from(2))),
+        );
+        assert_eq!(Some(true), eval_filter(cmd, &json!({"age": 3})));
+    }
+
+    #[test]
+    fn eval_map_ok() {
+        let cmd = Cmd::Map(
+            Box::new(Cmd::Json(json!([1, 2, 3, 4, 5]))),
+            "len".to_string(),
+        );
+        assert_eq!(Ok(json!([1, 1, 1, 1, 1])), eval(cmd));
     }
 
     #[test]
