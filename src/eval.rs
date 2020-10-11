@@ -51,9 +51,9 @@ pub fn eval_cmd(cache: &mut Cache, cmd: Cmd) -> Res {
         Cmd::Json(val) => Ok(val),
         Cmd::Keys(_page) => unimplemented!(),
         Cmd::Last(arg) => eval_unr_fn(cache, *arg, |x| Ok(json_last(x))),
-        Cmd::Max(arg) => eval_unr_fn_ref(cache, *arg, json_max),
+        Cmd::Max(arg) => Ok(json_max(&eval_cmd(cache, *arg)?).cloned().unwrap_or(Json::Null)),
         Cmd::In(lhs, rhs) => eval_bin_fn(cache, *lhs, *rhs, |x, y| Ok(Json::from(json_in(x, y)))),
-        Cmd::Min(arg) => eval_unr_fn_ref(cache, *arg, json_min),
+        Cmd::Min(arg) => Ok(json_min(&eval_cmd(cache, *arg)?).cloned().unwrap_or(Json::Null)),
         Cmd::Mul(lhs, rhs) => eval_bin_fn(cache, *lhs, *rhs, json_mul),
         Cmd::Push(key, arg) => {
             let val = eval_cmd(cache, *arg)?;
@@ -168,17 +168,8 @@ where
     f(&val)
 }
 
-fn eval_unr_fn_ref<F>(cache: &mut Cache, arg: Cmd, f: F) -> Res
-where
-    F: Fn(&Json) -> &Json,
-{
-    let val = eval_cmd(cache, arg)?;
-    Ok(f(&val).clone())
-}
-
 pub fn eval_filter(cmd: Cmd, val: &Json) -> Option<bool> {
     let r= apply(cmd.clone(), val).ok();
-    println!("eval_filter({:?},{:?})={:?}", cmd, val, r);
     if let Some(g) = r {
         g.as_bool()
     } else {

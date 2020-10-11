@@ -348,10 +348,10 @@ pub fn json_dev(val: &Json) -> Result<Json, Error> {
     }
 }
 
-pub fn json_max(val: &Json) -> &Json {
+pub fn json_max(val: &Json) -> Option<&Json> {
     match val {
         Json::Array(ref arr) if !arr.is_empty() => arr_max(arr),
-        val => val,
+        val => Some(val),
     }
 }
 
@@ -618,10 +618,10 @@ fn json_sub_nums(x: &JsonNum, y: &JsonNum) -> Json {
     }
 }
 
-pub fn json_min(val: &Json) -> &Json {
+pub fn json_min(val: &Json) -> Option<&Json> {
     match val {
         Json::Array(ref arr) if !arr.is_empty() => arr_min(arr),
-        val => val,
+        val => Some(val),
     }
 }
 
@@ -700,7 +700,8 @@ pub fn json_f64(val: &Json) -> Option<f64> {
     }
 }
 
-fn arr_max(s: &[Json]) -> &Json {
+fn arr_max(s: &[Json]) -> Option<&Json> {
+    /*
     let mut max = &s[0];
     for val in &s[1..] {
         if json_gt(val, max) {
@@ -708,16 +709,20 @@ fn arr_max(s: &[Json]) -> &Json {
         }
     }
     max
+    */
+    s.par_iter().reduce_with(max)
 }
 
-fn arr_min(s: &[Json]) -> &Json {
-    let mut min = &s[0];
-    for val in &s[1..] {
-        if json_lt(val, min) {
-            min = val;
-        }
-    }
-    min
+fn max<'a>(x: &'a Json, y: &'a Json) -> &'a Json {
+    if json_gt(x, y) { x } else { y }
+}
+
+fn min<'a>(x: &'a Json, y: &'a Json) -> &'a Json {
+    if json_lt(x, y) { x } else { y }
+}
+
+fn arr_min(s: &[Json]) -> Option<&Json> {
+    s.par_iter().reduce_with(min)
 }
 
 pub fn json_string(x: &Json) -> Json {
@@ -796,8 +801,8 @@ pub fn json_median(val: &mut Json) -> Result<Json, Error> {
 
 fn map(f: &str) -> Option<fn(&Json) -> Result<Json, Error>> {
     match f {
-        "max" => Some(|x| Ok(json_max(x).clone())),
-        "min" => Some(|x| Ok(json_min(x).clone())),
+        "max" => Some(|x| Ok(json_max(x).cloned().unwrap_or(Json::Null))),
+        "min" => Some(|x| Ok(json_min(x).cloned().unwrap_or(Json::Null))),
         "len" => Some(|x| Ok(Json::from(json_count(x)))),
         _ => unimplemented!(),
     }
@@ -888,13 +893,6 @@ pub fn json_reverse(val: &mut Json) {
 
 pub fn json_sortby(_val: &mut Json, _key: &str) {
     todo!("work out how to handle non existing entries")
-}
-
-fn num_gt(x: &Number, y: &Number) -> bool {
-    match (x.as_i64(), y.as_i64()) {
-        (Some(x), Some(y)) => x > y,
-        _ => x.as_f64().unwrap() > y.as_f64().unwrap(),
-    }
 }
 
 pub fn json_ord(x: &Json, y: &Json) -> Ordering {

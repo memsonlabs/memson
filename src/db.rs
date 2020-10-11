@@ -193,7 +193,6 @@ impl<'a> Query<'a> {
     }
 
     fn eval_where(&self, rows: &[Json], filter: &Cmd) -> Result<Vec<Json>, Error> {
-        println!("eval_where({:?}, {:?})", rows, filter);
         let mut filtered_rows = Vec::new();
         for row in rows {
             if let Some(obj) = row.as_object() {

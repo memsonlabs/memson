@@ -47,7 +47,6 @@ async fn main() -> memson::Result<()> {
                 if let Some(result) = lines.next().await {
                     match result {
                         Ok(line) => {
-                            println!("line={:?}", line);
                             let val: Json = serde_json::from_str(&line).unwrap();
                             println!("{}", serde_json::to_string_pretty(&val).unwrap());
                         }

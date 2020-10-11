@@ -37,15 +37,14 @@ pub fn apply(cmd: Cmd, val: &Json) -> Res {
         Cmd::Eq(lhs, rhs) => {
             let x = apply(*lhs, &val)?;
             let y = apply(*rhs, &val)?;
-            println!("x={:?}\ny={:?}", x, y);
             Ok(json_eq(&x, &y))
         }
         Cmd::Json(val) => Ok(val),
         Cmd::Append(_lhs, _rhs) => unimplemented!(),
         Cmd::Bar(_, _) => unimplemented!(),
         Cmd::Set(_, _) => unimplemented!(),
-        Cmd::Max(arg) => Ok(json_max(&apply(*arg, val)?).clone()),
-        Cmd::Min(arg) => Ok(json_min(&apply(*arg, val)?).clone()),
+        Cmd::Max(arg) => Ok(json_max(&apply(*arg, val)?).cloned().unwrap_or(Json::Null)),
+        Cmd::Min(arg) => Ok(json_min(&apply(*arg, val)?).cloned().unwrap_or(Json::Null)),
         Cmd::Avg(arg) => json_avg(&apply(*arg, val)?),
         Cmd::Delete(_) => unimplemented!(),
         Cmd::StdDev(arg) => json_dev(&apply(*arg, val)?),
