@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 
 pub type Cache = BTreeMap<String, Json>;
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct QueryCmd {
     #[serde(rename = "select")]
@@ -28,12 +27,12 @@ impl QueryCmd {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Range {
     pub start: Option<usize>,
-    pub end: Option<usize>,
+    pub size: Option<usize>,
 }
 
 impl Range {
     pub fn has_indices(&self) -> bool {
-        self.start.is_some() || self.end.is_some()
+        self.start.is_some() || self.size.is_some()
     }
 }
 
@@ -82,7 +81,7 @@ pub enum Cmd {
     #[serde(rename = "insert")]
     Insert(String, Vec<JsonObj>),
     #[serde(rename = "keys")]
-    Keys(Option<usize>),
+    Keys(Option<Range>),
     #[serde(rename = "len")]
     Len(Box<Cmd>),
     #[serde(rename = "unique")]

@@ -15,7 +15,7 @@ use tokio_util::codec::{Framed, LinesCodec};
 ///
 /// `basic_scheduler` is used here to avoid spawning background threads. The CLI
 /// tool use case benefits more by being lighter instead of multi-threaded.
-#[tokio::main(basic_scheduler)]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> memson::Result<()> {
     // Parse command line arguments
     //let cli = Cli::from_args();
@@ -71,38 +71,6 @@ async fn main() -> memson::Result<()> {
         }
     }
     rl.save_history("history.txt").unwrap();
-    /*
-    let mut stdout = io::stdout();
-    let stdin = io::stdin();
-    let mut input = String::new();
-    loop {
-        print!("{}", Paint::green("memson> "));
-        stdout.flush().map_err(|_| memson::Error::BadIO)?;
-        if let Err(err) = stdin.read_line(&mut input) {
-            println!("error: {}", err);
-            continue;
-        };
-        if &input == "exit" {
-            break;
-        }
-        input.remove(input.len() - 1);
-        lines.send(&input).map_err(|_| Error::BadIO).await?;
-        println!("line sent");
-        input.clear();
-        if let Some(result) = lines.next().await {
-            match result {
-                Ok(line) => {
-                    println!("{}", line);
-                }
-                Err(e) => {
-                    println!("error on decoding from socket; error = {:?}", e);
-                }
-            }
-        }
-
-
-    }
-    */
 
     Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::apply::apply_rows;
-use crate::cmd::{Cache, Cmd, QueryCmd};
+use crate::cmd::{Cache, Cmd, QueryCmd, Range};
 use crate::err::Error;
 use crate::eval::*;
 use crate::json::*;
@@ -7,6 +7,8 @@ use crate::Res;
 use rayon::prelude::*;
 use serde_json::{Value as Json, Value};
 use std::collections::HashMap;
+
+pub(crate) const PAGE_SIZE: usize = 50;
 
 pub struct Query<'a> {
     pub(crate) db: &'a InMemDb,
@@ -40,6 +42,28 @@ impl InMemDb {
     /// retrieves the val of the ke/val entry
     fn key(&self, key: String) -> Result<Json, Error> {
         self.cache.get(&key).cloned().ok_or(Error::BadKey(key))
+    }
+
+    /// the paginated keys of entried in memson
+    pub fn keys(&self, range: Option<Range>) -> Vec<Json> {
+        if let Some(range) = range {
+            let start = range.start.unwrap_or(0);
+            let size = range.size.unwrap_or(PAGE_SIZE);
+            self.cache
+                .keys()
+                .skip(start)
+                .take(size)
+                .cloned()
+                .map(Json::from)
+                .collect()
+        } else {
+            self.cache
+                .keys()
+                .take(PAGE_SIZE)
+                .cloned()
+                .map(Json::from)
+                .collect()
+        }
     }
 
     /// delete an entry by key and return the previous value if exists

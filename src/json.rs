@@ -2,7 +2,7 @@ use crate::err::Error;
 
 use crate::cmd::Range;
 use crate::Res;
-use rayon::prelude::{IntoParallelRefIterator, ParallelIterator, ParallelSliceMut};
+use rayon::prelude::*;
 use serde_json::Number;
 pub use serde_json::{json, Map};
 use std::cmp::Ordering;
@@ -22,13 +22,23 @@ pub fn unique(val: &Json) -> Result<Json, Error> {
     Ok(json_unique(val))
 }
 
-/// Equality test between two json values. Returns back a json value of a boolean or an array of booleans depending
+/// Vectorized equality test between two json values. Returns back a json value of a boolean or an array of booleans depending
 /// if any of the arguments is an array.
 ///
 pub fn json_eq(x: &Json, y: &Json) -> Json {
-    match x {
-        Json::Array(arr) => Json::Array(arr.iter().map(|x| Json::Bool(x == y)).collect()),
-        x => Json::from(json_equal(x, y)),
+    match (x, y) {
+        (Json::Array(x), Json::Array(y)) => {
+            let val: Vec<Json> = x
+                .par_iter()
+                .zip(y.par_iter())
+                .map(|(x, y)| Json::from(x == y))
+                .collect();
+            Json::Array(val)
+        }
+        (Json::Array(x), val) | (val, Json::Array(x)) => {
+            Json::Array(x.par_iter().map(|x| Json::from(x == val)).collect())
+        }
+        (x, y) => Json::from(x == y),
     }
 }
 
@@ -36,9 +46,93 @@ pub fn json_eq(x: &Json, y: &Json) -> Json {
 /// if any of the arguments is an array.
 ///
 pub fn json_not_eq(x: &Json, y: &Json) -> Json {
-    match x {
-        Json::Array(arr) => Json::Array(arr.iter().map(|x| Json::Bool(x != y)).collect()),
-        x => Json::from(x != y),
+    match (x, y) {
+        (Json::Array(x), Json::Array(y)) => Json::Array(
+            x.par_iter()
+                .zip(y.par_iter())
+                .map(|(x, y)| Json::from(x != y))
+                .collect(),
+        ),
+        (Json::Array(x), val) | (val, Json::Array(x)) => {
+            Json::Array(x.par_iter().map(|x| Json::from(x != val)).collect())
+        }
+        (x, y) => Json::from(x != y),
+    }
+}
+
+/// Vectorized Greater than test between two json values.
+/// Returns back a json value of a boolean or an array of booleans.
+///
+pub fn json_gt(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(x), Json::Array(y)) => Json::Array(
+            x.par_iter()
+                .zip(y.par_iter())
+                .map(|(x, y)| gt(x, y))
+                .map(Json::from)
+                .collect(),
+        ),
+        (Json::Array(x), val) | (val, Json::Array(x)) => {
+            Json::Array(x.par_iter().map(|x| gt(x, val)).map(Json::from).collect())
+        }
+        (x, y) => Json::from(gt(x, y)),
+    }
+}
+
+/// Vectorized Less than test between two json values.
+/// Returns back a json value of a boolean or an array of booleans.
+///
+pub fn json_lt(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(x), Json::Array(y)) => Json::Array(
+            x.par_iter()
+                .zip(y.par_iter())
+                .map(|(x, y)| lt(x, y))
+                .map(Json::from)
+                .collect(),
+        ),
+        (Json::Array(x), val) | (val, Json::Array(x)) => {
+            Json::Array(x.par_iter().map(|x| lt(x, val)).map(Json::from).collect())
+        }
+        (x, y) => Json::from(lt(x, y)),
+    }
+}
+
+/// Vectorized Less than or equals to test between two json values.
+/// Returns back a json value of a boolean or an array of booleans.
+///
+pub fn json_lte(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(x), Json::Array(y)) => Json::Array(
+            x.par_iter()
+                .zip(y.par_iter())
+                .map(|(x, y)| lte(x, y))
+                .map(Json::from)
+                .collect(),
+        ),
+        (Json::Array(x), val) | (val, Json::Array(x)) => {
+            Json::Array(x.par_iter().map(|x| lt(x, val)).map(Json::from).collect())
+        }
+        (x, y) => Json::from(lte(x, y)),
+    }
+}
+
+/// Vectorized greater than or equals to test between two json values.
+/// Returns back a json value of a boolean or an array of booleans.
+///
+pub fn json_gte(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Array(x), Json::Array(y)) => Json::Array(
+            x.par_iter()
+                .zip(y.par_iter())
+                .map(|(x, y)| gte(x, y))
+                .map(Json::from)
+                .collect(),
+        ),
+        (Json::Array(x), val) | (val, Json::Array(x)) => {
+            Json::Array(x.par_iter().map(|x| lt(x, val)).map(Json::from).collect())
+        }
+        (x, y) => Json::from(gte(x, y)),
     }
 }
 
@@ -116,107 +210,28 @@ pub fn noteq(x: &Json, y: &Json) -> Json {
     }
 }
 
-// greater than gate to test if x is greater than y. Returns a boolean wrapped as a json value.
-pub fn gt(x: &Json, y: &Json) -> Json {
-    match (x, y) {
-        (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs
-                .iter()
-                .zip(rhs.iter())
-                .map(|(x, y)| json_gt(x, y))
-                .map(Json::Bool)
-                .collect();
-            Json::Array(v)
-        }
-        (Json::Array(lhs), y) => {
-            Json::Array(lhs.iter().map(|x| json_gt(x, y)).map(Json::Bool).collect())
-        }
-        (x, y) => Json::Bool(json_gt(x, y)),
-    }
-}
-
-// greater than or equals to gate to test if x is greater than or equal to y.
-// Returns a boolean wrapped as a json value.
-pub fn gte(x: &Json, y: &Json) -> Json {
-    match (x, y) {
-        (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs
-                .iter()
-                .zip(rhs.iter())
-                .map(|(x, y)| json_gte(x, y))
-                .map(Json::Bool)
-                .collect();
-            Json::Array(v)
-        }
-        (Json::Array(lhs), y) => {
-            Json::Array(lhs.iter().map(|x| json_gte(x, y)).map(Json::Bool).collect())
-        }
-        (x, y) => Json::Bool(json_gte(x, y)),
-    }
-}
-
-// less than or equals to gate to test if x is less than or equal to y.
-// Returns a boolean wrapped as a json value.
-pub fn lte(x: &Json, y: &Json) -> Json {
-    match (x, y) {
-        (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs
-                .iter()
-                .zip(rhs.iter())
-                .map(|(x, y)| json_lte(x, y))
-                .map(Json::Bool)
-                .collect();
-            Json::Array(v)
-        }
-        (Json::Array(lhs), y) => {
-            Json::Array(lhs.iter().map(|x| json_lte(x, y)).map(Json::Bool).collect())
-        }
-        (x, y) => Json::Bool(json_lte(x, y)),
-    }
-}
-
-// less than gate to test if x is less than to y.
-// Returns a boolean wrapped as a json value.
-pub fn lt(x: &Json, y: &Json) -> Json {
-    match (x, y) {
-        (Json::Array(lhs), Json::Array(rhs)) => {
-            let v = lhs
-                .iter()
-                .zip(rhs.iter())
-                .map(|(x, y)| json_lt(x, y))
-                .map(Json::Bool)
-                .collect();
-            Json::Array(v)
-        }
-        (Json::Array(lhs), y) => {
-            Json::Array(lhs.iter().map(|x| json_lt(x, y)).map(Json::Bool).collect())
-        }
-        (x, y) => Json::Bool(json_lt(x, y)),
-    }
-}
-
 // greater than gate to test if x is greater than to y.
 // Returns a boolean and returns false if incomparable json types.
-pub fn json_gt(x: &Json, y: &Json) -> bool {
+pub fn gt(x: &Json, y: &Json) -> bool {
     matches!(json_cmp(x, y), Ok(Ordering::Greater))
 }
 
 // less than gate to test if x is less than to y.
 // Returns a boolean and returns false if incomparable json types.
-pub fn json_lt(x: &Json, y: &Json) -> bool {
+pub fn lt(x: &Json, y: &Json) -> bool {
     matches!(json_cmp(x, y), Ok(Ordering::Less))
 }
 
 // greater than or equals to gate to test if x is greater than or equal to y.
 // Returns a boolean and returns false if incomparable json types.
-pub fn json_gte(x: &Json, y: &Json) -> bool {
+pub fn gte(x: &Json, y: &Json) -> bool {
     matches!(json_cmp(x, y), Ok(Ordering::Greater) | Ok(Ordering::Equal))
 }
 
 // less than or equals to gate to test if x is less than or equal to y.
 // Returns a boolean and returns false if incomparable json types.
-pub fn json_lte(x: &Json, y: &Json) -> bool {
-    matches!(json_cmp(x, y),Ok(Ordering::Less) | Ok(Ordering::Equal))
+pub fn lte(x: &Json, y: &Json) -> bool {
+    matches!(json_cmp(x, y), Ok(Ordering::Less) | Ok(Ordering::Equal))
 }
 
 // counts the numbers of elements in the json value
@@ -501,10 +516,13 @@ pub fn json_div(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
-/// sort a json value in ascending order
-pub fn json_sort_ascend(val: &mut Json) {
+pub fn json_sort(val: &mut Json, descend: bool) {
     if let Json::Array(ref mut arr) = val {
-        arr.par_sort_by(|x, y| json_str(x).cmp(&json_str(y)));
+        if descend {
+            arr.par_sort_by(|x, y| json_str(x).cmp(&json_str(y)).reverse())
+        } else {
+            arr.par_sort_by(|x, y| json_str(x).cmp(&json_str(y)))
+        }
     }
 }
 
@@ -714,7 +732,7 @@ pub fn json_f64(val: &Json) -> Option<f64> {
 }
 
 fn max<'a>(x: &'a Json, y: &'a Json) -> &'a Json {
-    if json_gt(x, y) {
+    if gt(x, y) {
         x
     } else {
         y
@@ -722,7 +740,7 @@ fn max<'a>(x: &'a Json, y: &'a Json) -> &'a Json {
 }
 
 fn min<'a>(x: &'a Json, y: &'a Json) -> &'a Json {
-    if json_lt(x, y) {
+    if lt(x, y) {
         x
     } else {
         y
@@ -807,17 +825,14 @@ pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     }
 }
 
+//TODO add more cases
 fn map(f: &str) -> Option<fn(&Json) -> Res> {
     match f {
         "max" => Some(|x| Ok(json_max(x).cloned().unwrap_or(Json::Null))),
         "min" => Some(|x| Ok(json_min(x).cloned().unwrap_or(Json::Null))),
         "len" => Some(|x| Ok(json_count(x))),
-        _ => unimplemented!(),
+        _ => None,
     }
-}
-
-pub fn numsort(mut _val: Json, _descend: bool) -> Json {
-    unimplemented!()
 }
 
 pub fn json_in(lhs: &Json, rhs: &Json) -> Json {
@@ -869,10 +884,36 @@ pub fn json_flat(val: Json) -> Json {
     }
 }
 
-pub fn json_numsort(val: Json, _descend: bool) -> Json {
+pub fn json_fold_add(x: Json, y: &Json) -> Json {
+    match y {
+        Json::Number(y) => {
+            if let Json::Number(x) = x {
+                Json::Number(json_add_nums(&x, y))
+            } else {
+                Json::Number(y.clone())
+            }
+        }
+        _ => x
+    }
+}
+
+pub fn json_reduce_add(x: Json, y: Json) -> Json {
+    match (x, y) {
+        (Json::Number(x), Json::Number(y)) => {
+            Json::Number(json_add_nums(&x, &y))
+        }
+        (x, _) => x
+    }
+}
+
+pub fn json_numsort(val: Json, descend: bool) -> Json {
     match val {
         Json::Array(mut arr) => {
-            arr.sort_by_key(|x| x.as_i64());
+            if descend {
+                arr.sort_by_key(|x| std::cmp::Reverse(x.as_i64()));
+            } else {
+                arr.sort_by_key(|x| x.as_i64());
+            }
             Json::Array(arr)
         }
         val => val,
@@ -911,7 +952,7 @@ fn arr_slice(arr: Vec<Json>, start: Option<usize>, end: Option<usize>) -> Result
 
 pub fn json_slice(val: Json, range: Range) -> Res {
     match val {
-        Json::Array(vec) => arr_slice(vec, range.start, range.end),
+        Json::Array(vec) => arr_slice(vec, range.start, range.size),
         _ => Err(Error::ExpectedArr),
     }
 }
@@ -929,7 +970,7 @@ pub fn json_sortby(_val: &mut Json, _key: &str) {
 pub fn json_ord(x: &Json, y: &Json) -> Ordering {
     if x == y {
         Ordering::Equal
-    } else if json_gt(x, y) {
+    } else if gt(x, y) {
         Ordering::Greater
     } else {
         Ordering::Less
@@ -939,7 +980,7 @@ pub fn json_ord(x: &Json, y: &Json) -> Ordering {
 pub fn json_desc_ord(x: &Json, y: &Json) -> Ordering {
     if x == y {
         Ordering::Equal
-    } else if json_gt(x, y) {
+    } else if gt(x, y) {
         Ordering::Less
     } else {
         Ordering::Greater
@@ -1046,11 +1087,11 @@ mod tests {
     #[test]
     fn json_sort_ok() {
         let mut val = json!([1, 9, 4, 8, 3, 6, 10, 5, 7, 2]);
-        json_sort_ascend(&mut val);
+        json_sort(&mut val, false);
         assert_eq!(json!([1, 10, 2, 3, 4, 5, 6, 7, 8, 9]), val);
 
         let mut val = json!(["1", 9, 4, 8, 3, 6, 10, 5, 7, 1]);
-        json_sort_ascend(&mut val);
+        json_sort(&mut val, false);
         assert_eq!(json!(['1', 1, 10, 3, 4, 5, 6, 7, 8, 9]), val);
     }
 }

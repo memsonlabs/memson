@@ -83,7 +83,7 @@ async fn main() -> io::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:8080".to_string());
 
-    let mut listener = TcpListener::bind(&addr).await?;
+    let listener = TcpListener::bind(&addr).await?;
     println!("Listening on: {}", addr);
 
     // Create the shared state of this server that will be shared amongst all
@@ -121,7 +121,7 @@ async fn main() -> io::Result<()> {
                 // After getting a new connection first we see a clone of the database
                 // being created, which is creating a new reference for this connected
                 // client to use.
-                let mut tx = tx.clone();
+                let tx = tx.clone();
 
                 // Like with other small servers, we'll `spawn` this client to ensure it
                 // runs concurrently with all other clients. The `move` keyword is used
