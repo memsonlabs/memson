@@ -104,12 +104,10 @@ async fn main() -> io::Result<()> {
                 Ok(cmd) => cmd,
                 _ => continue,
             };
-            println!("{:?}", cmd);
             let val = match db.eval(cmd) {
                 Ok(val) => val.to_string(),
                 Err(err) => json!({"error": err.to_string()}).to_string(),
             };
-            println!("val={:?}", val);
             if let Err(err) = req.resp.send(val) {
                 eprintln!("{:?}", err);
             }

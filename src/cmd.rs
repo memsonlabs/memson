@@ -5,10 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 
 pub type Cache = BTreeMap<String, Json>;
 
-pub struct Query<'a> {
-    pub(crate) cache: &'a Cache,
-    pub(crate) cmd: QueryCmd,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct QueryCmd {
@@ -26,6 +22,18 @@ pub struct QueryCmd {
 impl QueryCmd {
     fn parse(json: Json) -> crate::Result<Self> {
         serde_json::from_value(json).map_err(|_| Error::Serialize)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Range {
+    pub start: Option<usize>,
+    pub end: Option<usize>,
+}
+
+impl Range {
+    pub fn has_indices(&self) -> bool {
+        self.start.is_some() || self.end.is_some()
     }
 }
 
@@ -125,6 +133,8 @@ pub enum Cmd {
     NumSort(Box<Cmd>, bool),
     #[serde(rename = "has")]
     Has(String),
+    #[serde(rename = "slice")]
+    Slice(Box<Cmd>, Range),
 }
 
 fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
@@ -251,9 +261,9 @@ impl Cmd {
                             let arr = val.as_array_mut().ok_or(Error::ExpectedArr)?;
                             let val = arr.remove(1);
                             let val_str = val.as_str().map(|x| x.to_string());
-                            let f = val_str.ok_or(Error::BadArg(val))?.to_string();
+                            let f = val_str.ok_or(Error::BadArg(val))?;
                             let arg = Cmd::parse(arr.remove(0))?;
-                            Ok(Cmd::Map(Box::new(arg), f.to_string()))
+                            Ok(Cmd::Map(Box::new(arg), f))
                         }
                         "max" => parse_unr_fn(val, Cmd::Max),
                         "median" => parse_unr_fn(val, Cmd::Median),
@@ -303,22 +313,6 @@ impl Cmd {
                 Cmd::Json(Json::from(s))
             }),
             val => Ok(Cmd::Json(val)),
-        }
-    }
-
-    pub fn is_aggregate(&self) -> bool {
-        match self {
-            Cmd::Avg(_)
-            | Cmd::Max(_)
-            | Cmd::First(_)
-            | Cmd::Min(_)
-            | Cmd::StdDev(_)
-            | Cmd::Last(_)
-            | Cmd::Sum(_)
-            | Cmd::Var(_)
-            | Cmd::Unique(_)
-            | Cmd::Len(_) => true,
-            _ => false,
         }
     }
 }

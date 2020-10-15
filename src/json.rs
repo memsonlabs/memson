@@ -1,85 +1,30 @@
 use crate::err::Error;
 
+use crate::cmd::Range;
+use crate::Res;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator, ParallelSliceMut};
 use serde_json::Number;
 pub use serde_json::{json, Map};
-use std::cmp::{Ordering, PartialOrd};
+use std::cmp::Ordering;
 use std::mem;
-
-pub fn null() -> Json {
-    Json::Null
-}
 
 pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
 
+// wrapper around json_count to return as a Result
 pub fn count(val: &Json) -> Result<Json, Error> {
     Ok(json_count(val))
 }
 
+// wrapper around json_unqiue to return as Result
 pub fn unique(val: &Json) -> Result<Json, Error> {
     Ok(json_unique(val))
 }
 
-trait Compare {
-    fn gt(&self) -> bool;
-    fn gte(&self) -> bool;
-    fn lt(&self) -> bool;
-    fn lte(&self) -> bool;
-}
-
-struct Cmp<T> {
-    x: T,
-    y: T,
-}
-
-impl<T: PartialOrd> Compare for Cmp<T> {
-    fn gt(&self) -> bool {
-        self.x > self.y
-    }
-
-    fn gte(&self) -> bool {
-        self.x >= self.y
-    }
-
-    fn lt(&self) -> bool {
-        self.x < self.y
-    }
-
-    fn lte(&self) -> bool {
-        self.x <= self.y
-    }
-}
-
-impl<T: PartialOrd> Cmp<T> {
-    fn new(x: T, y: T) -> Cmp<T> {
-        Self { x, y }
-    }
-}
-
-trait GtLt {
-    fn apply<T>(&self, x: T, y: T) -> bool
-    where
-        T: Ord;
-}
-
-struct Gt {}
-
-impl GtLt for Gt {
-    fn apply<T: Ord>(&self, x: T, y: T) -> bool {
-        x > y
-    }
-}
-
-struct Lt {}
-
-impl GtLt for Lt {
-    fn apply<T: Ord>(&self, x: T, y: T) -> bool {
-        x < y
-    }
-}
-
+/// Equality test between two json values. Returns back a json value of a boolean or an array of booleans depending
+/// if any of the arguments is an array.
+///
 pub fn json_eq(x: &Json, y: &Json) -> Json {
     match x {
         Json::Array(arr) => Json::Array(arr.iter().map(|x| Json::Bool(x == y)).collect()),
@@ -87,52 +32,72 @@ pub fn json_eq(x: &Json, y: &Json) -> Json {
     }
 }
 
+/// Equality test between two json values. Returns back a json value of a boolean or an array of booleans depending
+/// if any of the arguments is an array.
+///
+pub fn json_not_eq(x: &Json, y: &Json) -> Json {
+    match x {
+        Json::Array(arr) => Json::Array(arr.iter().map(|x| Json::Bool(x != y)).collect()),
+        x => Json::from(x != y),
+    }
+}
+
+/// Json equality comparison test
 pub fn json_equal(x: &Json, y: &Json) -> bool {
     x == y
 }
 
-pub fn json_or(x: &Json, y: &Json) -> Json {
+// Vectorised or gate
+fn or_arr(x: &[Json], y: bool) -> Res {
+    let r: Result<Vec<Json>, Error> = x.par_iter().map(|x| json_or(x, &Json::Bool(y))).collect();
+    r.map(Json::Array)
+}
+
+/// or gate between two json values. Returns back a json value of a boolean.
+pub fn json_or(x: &Json, y: &Json) -> Res {
     match (x, y) {
-        (Json::Bool(x), Json::Bool(y)) => Json::from(*x || *y),
-        _ => unimplemented!(),
+        (Json::Bool(x), Json::Bool(y)) => Ok(Json::from(*x || *y)),
+        (Json::Bool(val), Json::Array(vec)) | (Json::Array(vec), Json::Bool(val)) => {
+            or_arr(vec, *val)
+        }
+        (x, y) => {
+            let val = json!([x.clone(), y.clone()]);
+            Err(Error::BadArg(val))
+        }
     }
 }
 
-pub fn json_and(x: &Json, y: &Json) -> Json {
+/// and gate between two json values. Returns back a json value of a boolean.
+pub fn json_and(x: &Json, y: &Json) -> Res {
     match (x, y) {
-        (Json::Bool(x), Json::Bool(y)) => Json::from(*x && *y),
-        _ => unimplemented!(),
+        (Json::Bool(x), Json::Bool(y)) => Ok(Json::from(*x && *y)),
+        (x, y) => Err(Error::BadArg(json!([x.clone(), y.clone()]))),
     }
 }
 
+// not equals gate
 pub fn json_neq(x: &Json, y: &Json) -> bool {
     x != y
 }
 
-fn json_cmp<'a>(x: &'a Json, y: &'a Json, p: &dyn Fn(&dyn Compare) -> bool) -> bool {
+/// Compares two json values for order.
+fn json_cmp<'a>(x: &'a Json, y: &'a Json) -> Result<Ordering, Error> {
     match (x, y) {
-        (Json::String(x), Json::String(y)) => {
-            let cmp = Cmp::new(x, y);
-            p(&cmp)
+        (Json::String(x), Json::String(y)) => Ok(x.cmp(y)),
+        (Json::Number(x), Json::Number(y)) => Ok(num_cmp(x, y)),
+        (Json::Number(_), _) => Err(Error::BadType),
+        (_, Json::Number(_)) => Err(Error::BadType),
+        (Json::Bool(x), Json::Bool(y)) => Ok(x.cmp(y)),
+        (Json::Bool(_), _) | (_, Json::Bool(_)) => Err(Error::BadType),
+        (Json::Null, Json::Null) => Ok(Ordering::Equal),
+        (Json::Null, _) | (_, Json::Null) => Err(Error::BadType),
+        (Json::Object(_), _) | (_, Json::Object(_)) | (Json::Array(_), _) | (_, Json::Array(_)) => {
+            Err(Error::BadType)
         }
-        (Json::Number(x), Json::Number(y)) => match (x.is_i64(), y.is_i64()) {
-            (true, true) => {
-                let cmp = Cmp::new(x.as_i64().unwrap(), y.as_i64().unwrap());
-                p(&cmp)
-            }
-            _ => {
-                let cmp = Cmp::new(x.as_f64().unwrap(), y.as_f64().unwrap());
-                p(&cmp)
-            }
-        },
-        (Json::Bool(x), Json::Bool(y)) => {
-            let cmp = Cmp::new(*x, *y);
-            p(&cmp)
-        }
-        _ => false,
     }
 }
 
+// noteq compares that two json values do not equal each other and wraps the boolean into a json value.
 pub fn noteq(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
@@ -151,6 +116,7 @@ pub fn noteq(x: &Json, y: &Json) -> Json {
     }
 }
 
+// greater than gate to test if x is greater than y. Returns a boolean wrapped as a json value.
 pub fn gt(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
@@ -169,6 +135,8 @@ pub fn gt(x: &Json, y: &Json) -> Json {
     }
 }
 
+// greater than or equals to gate to test if x is greater than or equal to y.
+// Returns a boolean wrapped as a json value.
 pub fn gte(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
@@ -187,6 +155,8 @@ pub fn gte(x: &Json, y: &Json) -> Json {
     }
 }
 
+// less than or equals to gate to test if x is less than or equal to y.
+// Returns a boolean wrapped as a json value.
 pub fn lte(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
@@ -205,6 +175,8 @@ pub fn lte(x: &Json, y: &Json) -> Json {
     }
 }
 
+// less than gate to test if x is less than to y.
+// Returns a boolean wrapped as a json value.
 pub fn lt(x: &Json, y: &Json) -> Json {
     match (x, y) {
         (Json::Array(lhs), Json::Array(rhs)) => {
@@ -223,22 +195,31 @@ pub fn lt(x: &Json, y: &Json) -> Json {
     }
 }
 
+// greater than gate to test if x is greater than to y.
+// Returns a boolean and returns false if incomparable json types.
 pub fn json_gt(x: &Json, y: &Json) -> bool {
-    json_cmp(x, y, &|x| x.gt())
+    matches!(json_cmp(x, y), Ok(Ordering::Greater))
 }
 
+// less than gate to test if x is less than to y.
+// Returns a boolean and returns false if incomparable json types.
 pub fn json_lt(x: &Json, y: &Json) -> bool {
-    json_cmp(x, y, &|x| x.lt())
+    matches!(json_cmp(x, y), Ok(Ordering::Less))
 }
 
+// greater than or equals to gate to test if x is greater than or equal to y.
+// Returns a boolean and returns false if incomparable json types.
 pub fn json_gte(x: &Json, y: &Json) -> bool {
-    json_cmp(x, y, &|x| x.gte())
+    matches!(json_cmp(x, y), Ok(Ordering::Greater) | Ok(Ordering::Equal))
 }
 
+// less than or equals to gate to test if x is less than or equal to y.
+// Returns a boolean and returns false if incomparable json types.
 pub fn json_lte(x: &Json, y: &Json) -> bool {
-    json_cmp(x, y, &|x| x.lte())
+    matches!(json_cmp(x, y),Ok(Ordering::Less) | Ok(Ordering::Equal))
 }
 
+// counts the numbers of elements in the json value
 pub fn json_count(val: &Json) -> Json {
     match val {
         Json::Array(ref arr) => Json::from(arr.len()),
@@ -247,6 +228,7 @@ pub fn json_count(val: &Json) -> Json {
     }
 }
 
+// appends json to an existing json value.
 pub fn json_append(val: &mut Json, elem: Json) {
     match val {
         Json::Array(ref mut arr) => {
@@ -272,6 +254,7 @@ pub fn json_append(val: &mut Json, elem: Json) {
     }
 }
 
+/// retrieves the first element in the json value.
 //TODO refactor arg from ref to val
 pub fn json_first(val: &Json) -> Json {
     match val {
@@ -287,6 +270,7 @@ pub fn json_first(val: &Json) -> Json {
     }
 }
 
+/// retrieves the last element in the json value.
 pub fn json_last(val: &Json) -> Json {
     match val {
         Json::Array(ref arr) if !arr.is_empty() => arr[arr.len() - 1].clone(),
@@ -299,6 +283,7 @@ pub fn json_last(val: &Json) -> Json {
     }
 }
 
+/// sums the json value.
 pub fn json_sum(val: &Json) -> Json {
     match val {
         Json::Number(val) => Json::Number(val.clone()),
@@ -307,17 +292,15 @@ pub fn json_sum(val: &Json) -> Json {
     }
 }
 
+/// pops off the last element of the json value.
 pub fn json_pop(val: &mut Json) -> Result<Option<Json>, Error> {
     match val {
-        Json::Array(ref mut arr) => Ok(arr_pop(arr)),
+        Json::Array(ref mut arr) => Ok(arr.pop()),
         _ => Err(Error::ExpectedArr),
     }
 }
 
-fn arr_pop(arr: &mut Vec<Json>) -> Option<Json> {
-    arr.pop()
-}
-
+/// calculates the average of the json value.
 pub fn json_avg(val: &Json) -> Result<Json, Error> {
     match val {
         Json::Number(val) => Ok(Json::Number(val.clone())),
@@ -326,6 +309,7 @@ pub fn json_avg(val: &Json) -> Result<Json, Error> {
     }
 }
 
+/// calculates the variance of the json value.
 pub fn json_var(val: &Json) -> Result<Json, Error> {
     match val {
         Json::Number(_) => Ok(Json::from(0)),
@@ -334,6 +318,7 @@ pub fn json_var(val: &Json) -> Result<Json, Error> {
     }
 }
 
+/// calculates the standard deviation of the json value.
 pub fn json_dev(val: &Json) -> Result<Json, Error> {
     match val {
         Json::Number(_) => Ok(Json::from(0)),
@@ -348,14 +333,16 @@ pub fn json_dev(val: &Json) -> Result<Json, Error> {
     }
 }
 
+/// calculates the maximum value of the json value.
 pub fn json_max(val: &Json) -> Option<&Json> {
     match val {
-        Json::Array(ref arr) if !arr.is_empty() => arr_max(arr),
+        Json::Array(ref a) if !a.is_empty() => a.par_iter().reduce_with(max),
         val => Some(val),
     }
 }
 
 //TODO(jaupe) add more cases
+/// adds two json values together.
 pub fn json_add(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
         (Json::Array(lhs), Json::Array(rhs)) => json_add_arrs(lhs, rhs),
@@ -368,7 +355,17 @@ pub fn json_add(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
+pub fn json_add2(x: &Json, y: &Json) -> Json {
+    match (x, y) {
+        (Json::Number(x), Json::Number(y)) => Json::Number(json_add_nums(x, y)),
+        (Json::Number(x), _) => Json::Number(x.clone()),
+        (_, Json::Number(y)) => Json::Number(y.clone()),
+        _ => Json::from(0),
+    }
+}
+
 //TODO(jaupe) add more cases
+/// bars two json values together.
 pub fn json_bar(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
         (Json::Array(lhs), Json::Array(rhs)) => json_bar_arrs(lhs, rhs),
@@ -378,6 +375,7 @@ pub fn json_bar(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
+/// vectorised bar of  two json arrays.
 fn json_bar_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
     let mut out = Vec::new();
     for (x, y) in lhs.iter().zip(rhs.iter()) {
@@ -387,6 +385,7 @@ fn json_bar_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
     Ok(Json::Array(out))
 }
 
+/// vectorised bar of an array and scalar.
 fn json_bar_arr_val(lhs: &[Json], rhs: &Json) -> Result<Json, Error> {
     let mut out = Vec::new();
     for val in lhs {
@@ -396,6 +395,7 @@ fn json_bar_arr_val(lhs: &[Json], rhs: &Json) -> Result<Json, Error> {
     Ok(Json::Array(out))
 }
 
+/// bar of two json numbers
 fn json_bar_num_num(lhs: &Number, rhs: &Number) -> Result<Json, Error> {
     match (lhs.as_i64(), rhs.as_i64()) {
         (Some(x), Some(y)) => Ok(Json::from(x / y * y)),
@@ -403,6 +403,7 @@ fn json_bar_num_num(lhs: &Number, rhs: &Number) -> Result<Json, Error> {
     }
 }
 
+/// subtraction of two json values
 pub fn json_sub(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
         (Json::Array(lhs), Json::Array(rhs)) => json_sub_arrs(lhs, rhs),
@@ -413,6 +414,7 @@ pub fn json_sub(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
+/// multiplication of two json values
 pub fn json_mul(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
         (Json::Array(x), Json::Array(y)) => mul_arrs(x, y),
@@ -423,6 +425,7 @@ pub fn json_mul(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
+/// compute the unique elements of the json value
 pub fn json_unique(val: &Json) -> Json {
     match val {
         Json::Array(arr) => arr_unique(arr),
@@ -430,6 +433,7 @@ pub fn json_unique(val: &Json) -> Json {
     }
 }
 
+/// compute the unique elements of the json array
 fn arr_unique(arr: &[Json]) -> Json {
     let mut unique: Vec<Json> = Vec::new();
     for val in arr {
@@ -441,6 +445,7 @@ fn arr_unique(arr: &[Json]) -> Json {
     Json::Array(unique)
 }
 
+/// compute the multiplication of two json scalars
 fn mul_vals(x: &Json, y: &Json) -> Result<Json, Error> {
     match (x, y) {
         (Json::Number(x), Json::Number(y)) => mul_nums(x, y),
@@ -448,6 +453,7 @@ fn mul_vals(x: &Json, y: &Json) -> Result<Json, Error> {
     }
 }
 
+/// compute the multiplication of two json numbers
 fn mul_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
     let val = match (x.is_i64(), y.is_i64()) {
         (true, true) => Json::from(x.as_i64().unwrap() * y.as_i64().unwrap()),
@@ -456,6 +462,7 @@ fn mul_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
     Ok(val)
 }
 
+/// compute the vectorized multiplication of a two json numbers
 fn mul_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error> {
     let mut arr = Vec::new();
     for x in x.iter() {
@@ -464,6 +471,7 @@ fn mul_arr_num(x: &[Json], y: &JsonNum) -> Result<Json, Error> {
     Ok(Json::from(arr))
 }
 
+/// compute the vectorized multiplication of a json value and json number
 fn mul_val_num(x: &Json, y: &JsonNum) -> Result<Json, Error> {
     match x {
         Json::Number(ref x) => mul_nums(x, y),
@@ -473,6 +481,7 @@ fn mul_val_num(x: &Json, y: &JsonNum) -> Result<Json, Error> {
 }
 
 //TODO(jaupe) optimize by removing the temp allocs
+/// compute the vectorized multiplication of a json arrays
 fn mul_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
     let mut arr: Vec<Json> = Vec::new();
     for (x, y) in lhs.iter().zip(rhs.iter()) {
@@ -481,6 +490,7 @@ fn mul_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
     Ok(Json::from(arr))
 }
 
+/// compute the vectorized division of two json values
 pub fn json_div(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
         (Json::Array(ref lhs), Json::Array(ref rhs)) => div_arrs(lhs, rhs),
@@ -491,17 +501,20 @@ pub fn json_div(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     }
 }
 
+/// sort a json value in ascending order
 pub fn json_sort_ascend(val: &mut Json) {
     if let Json::Array(ref mut arr) = val {
         arr.par_sort_by(|x, y| json_str(x).cmp(&json_str(y)));
     }
 }
 
+/// divide two json numbers
 fn div_nums(x: &JsonNum, y: &JsonNum) -> Result<Json, Error> {
     let val = x.as_f64().unwrap() / y.as_f64().unwrap();
     Ok(Json::from(val))
 }
 
+/// vectorised division of two json arrays
 fn div_arrs(x: &[Json], y: &[Json]) -> Result<Json, Error> {
     let mut arr = Vec::new();
     for (x, y) in x.iter().zip(y.iter()) {
@@ -700,25 +713,20 @@ pub fn json_f64(val: &Json) -> Option<f64> {
     }
 }
 
-fn arr_max(s: &[Json]) -> Option<&Json> {
-    /*
-    let mut max = &s[0];
-    for val in &s[1..] {
-        if json_gt(val, max) {
-            max = val;
-        }
-    }
-    max
-    */
-    s.par_iter().reduce_with(max)
-}
-
 fn max<'a>(x: &'a Json, y: &'a Json) -> &'a Json {
-    if json_gt(x, y) { x } else { y }
+    if json_gt(x, y) {
+        x
+    } else {
+        y
+    }
 }
 
 fn min<'a>(x: &'a Json, y: &'a Json) -> &'a Json {
-    if json_lt(x, y) { x } else { y }
+    if json_lt(x, y) {
+        x
+    } else {
+        y
+    }
 }
 
 fn arr_min(s: &[Json]) -> Option<&Json> {
@@ -799,11 +807,11 @@ pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     }
 }
 
-fn map(f: &str) -> Option<fn(&Json) -> Result<Json, Error>> {
+fn map(f: &str) -> Option<fn(&Json) -> Res> {
     match f {
         "max" => Some(|x| Ok(json_max(x).cloned().unwrap_or(Json::Null))),
         "min" => Some(|x| Ok(json_min(x).cloned().unwrap_or(Json::Null))),
-        "len" => Some(|x| Ok(Json::from(json_count(x)))),
+        "len" => Some(|x| Ok(json_count(x))),
         _ => unimplemented!(),
     }
 }
@@ -885,6 +893,29 @@ pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
     }
 }
 
+fn arr_slice(arr: Vec<Json>, start: Option<usize>, end: Option<usize>) -> Result<Json, Error> {
+    let s = match (start, end) {
+        (Some(s), Some(e)) => {
+            if e > arr.len() || s < arr.len() {
+                return Err(Error::IndexOutOfBounds);
+            } else {
+                arr[s..e].to_vec()
+            }
+        }
+        (Some(s), None) => arr[s..].to_vec(),
+        (None, Some(e)) => arr[..e].to_vec(),
+        (None, None) => arr,
+    };
+    Ok(Json::Array(s))
+}
+
+pub fn json_slice(val: Json, range: Range) -> Res {
+    match val {
+        Json::Array(vec) => arr_slice(vec, range.start, range.end),
+        _ => Err(Error::ExpectedArr),
+    }
+}
+
 pub fn json_reverse(val: &mut Json) {
     if let Json::Array(ref mut arr) = val {
         arr.reverse();
@@ -930,6 +961,23 @@ pub fn sortby_desc_key(key: &str, x: &Json, y: &Json) -> Ordering {
         (None, Some(_)) => Ordering::Greater,
         (Some(_), None) => Ordering::Less,
         (None, None) => Ordering::Equal,
+    }
+}
+
+fn num_cmp(x: &Number, y: &Number) -> Ordering {
+    match (x.is_i64(), y.is_i64()) {
+        (true, true) => x.as_i64().unwrap().cmp(&y.as_i64().unwrap()),
+        _ => {
+            let x = x.as_f64().unwrap();
+            let y = y.as_f64().unwrap();
+            if (x - y).abs() < f64::EPSILON {
+                Ordering::Equal
+            } else if x < y {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
     }
 }
 

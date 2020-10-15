@@ -1,1 +1,1 @@
-{"max": {"key": "nums"}}
+{"select":{"maxQty":{"max":{"key":"qty"}}}, "from": "orders"}

@@ -1,93 +1,82 @@
-//! A "tiny database" and accompanying protocol
-//!
-//! This example shows the usage of shared state amongst all connected clients,
-//! namely a database of key/value pairs. Each connected client can send a
-//! series of GET/SET commands to query the current value of a key or set the
-//! value of a key.
-//!
-//! This example has a simple protocol you can use to interact with the server.
-//! To run, first run this in one terminal window:
-//!
-//!     cargo run --example tinydb
-//!
-//! and next in another windows run:
-//!
-//!     cargo run --example connect 127.0.0.1:8080
-//!
-//! In the `connect` window you can type in commands where when you hit enter
-//! you'll get a response from the server for that command. An example session
-//! is:
-//!
-//!
-//!     $ cargo run --example connect 127.0.0.1:8080
-//!     GET foo
-//!     foo = bar
-//!     GET FOOBAR
-//!     error: no key FOOBAR
-//!     SET FOOBAR my awesome string
-//!     set FOOBAR = `my awesome string`, previous: None
-//!     SET foo tokio
-//!     set foo = `tokio`, previous: Some("bar")
-//!     GET foo
-//!     foo = tokio
-//!
-//! Namely you can issue two forms of commands:
-//!
-//! * `GET $key` - this will fetch the value of `$key` from the database and
-//!   return it. The server's database is initially populated with the key `foo`
-//!   set to the value `bar`
-//! * `SET $key $value` - this will set the value of `$key` to `$value`,
-//!   returning the previous value, if any.
-
+use actix::prelude::*;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
-use serde::Serialize;
-use std::{env, io};
-use std::fmt::Debug;
-use std::sync::{Arc, RwLock};
+use memson::cmd::{Cmd, QueryCmd};
 use memson::db::InMemDb;
-use memson::Error;
-use memson::cmd::Cmd;
 use memson::json::Json;
-use std::fs::File;
-use std::io::Read;
+use memson::Error;
+use serde::Serialize;
+use serde_json::json;
+use std::env;
+use std::fmt::Debug;
 
-fn read_json_from_file(path: &str) -> io::Result<Json> {
-    let mut f = File::open(path)?;
-    let mut buf = Vec::new();
-    f.read_to_end(&mut buf)?;
-    Ok(serde_json::from_slice(&buf).unwrap())
+/// Define message
+#[derive(Message)]
+#[rtype(result = "Result<Json, Error>")]
+enum Request {
+    Command(Cmd),
+    Query(QueryCmd),
 }
 
-type Memson = Arc<RwLock<InMemDb>>;
+// Define actor
+struct DbActor {
+    db: InMemDb,
+}
 
-fn http_resp<T: Debug + Serialize>(r: Result<T, Error>) -> HttpResponse {
+impl Actor for DbActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, _ctx: &mut Context<Self>) {
+        println!("Actor is alive");
+    }
+
+    fn stopped(&mut self, _ctx: &mut Context<Self>) {
+        println!("Actor is stopped");
+    }
+}
+
+/// Define handler for `Ping` message
+impl Handler<Request> for DbActor {
+    type Result = Result<Json, Error>;
+
+    fn handle(&mut self, req: Request, _: &mut Context<Self>) -> Self::Result {
+        match req {
+            Request::Command(cmd) => self.db.eval(cmd),
+            Request::Query(qry) => self.db.query(qry),
+        }
+    }
+}
+
+fn http_resp<T: Debug + Serialize>(r: Result<Result<T, Error>, MailboxError>) -> HttpResponse {
     match r {
-        Ok(val) => HttpResponse::Ok().json(val),
+        Ok(Ok(val)) => HttpResponse::Ok().json(val),
+        Ok(Err(err)) => HttpResponse::Ok().json(err.to_string()),
         Err(_) => HttpResponse::InternalServerError().into(),
     }
 }
 
-async fn summary(db: web::Data<Memson>) -> HttpResponse {
-    let mut db = match db.write() {
-        Ok(db) => db,
-        Err(_) => return HttpResponse::InternalServerError().into(),
-    };
-    let res = db.eval(Cmd::Summary);
+async fn summary(tx: web::Data<Addr<DbActor>>) -> HttpResponse {
+    let res = tx.send(Request::Command(Cmd::Summary)).await;
     http_resp(res)
 }
 
-async fn eval(db: web::Data<Memson>, cmd: web::Json<Json>) -> HttpResponse {
+async fn eval2(db: web::Data<Addr<DbActor>>, cmd: web::Json<Json>) -> HttpResponse {
     let cmd = match Cmd::parse(cmd.0) {
         Ok(cmd) => cmd,
         Err(err) => return HttpResponse::InternalServerError().json(err.to_string()),
     };
     // Send message to `DbExecutor` actor
-    let mut db = match db.write() {
-        Ok(db) => db,
-        Err(_) => return HttpResponse::InternalServerError().into(),
-    };
-    let res = db.eval(cmd);
-    http_resp(res)
+    let r = db.send(Request::Command(cmd)).await;
+    http_resp(r)
+}
+
+async fn query2(db: web::Data<Addr<DbActor>>, cmd: web::Json<QueryCmd>) -> HttpResponse {
+    // Send message to `DbExecutor` actor
+    let r = db.send(Request::Query(cmd.0)).await;
+    http_resp(r)
+}
+
+fn orders(n: usize) -> Json {
+    Json::Array((0..n).map(|i| json!({"id": i, "qty": i % 100})).collect())
 }
 
 #[actix_rt::main]
@@ -101,17 +90,21 @@ async fn main() -> std::io::Result<()> {
     println!("memson is starting on {}", addr);
 
     let mut db = InMemDb::new();
-    db.set("nums", Json::Array((0..5_000_000).map(Json::from).collect()));
-    let db_data = Arc::new(RwLock::new(db));
+    db.set("orders", orders(4_000_000));
+
+    let actor = DbActor { db };
+    let actor_addr = actor.start();
+    //let memson = Arc::new(RwLock::new(db));
     HttpServer::new(move || {
         App::new()
             //enable logger
             .wrap(middleware::Logger::default())
-            .data(db_data.clone())
-            .service(web::resource("/cmd").route(web::post().to(eval)))
+            .data(actor_addr.clone())
+            .service(web::resource("/cmd").route(web::post().to(eval2)))
+            .service(web::resource("/query").route(web::post().to(query2)))
             .service(web::resource("/").route(web::get().to(summary)))
     })
-        .bind(addr)?
-        .run()
-        .await
+    .bind(addr.clone())?
+    .run()
+    .await
 }
