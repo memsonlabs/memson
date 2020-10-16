@@ -825,12 +825,21 @@ pub fn json_median(val: &mut Json) -> Result<Json, Error> {
     }
 }
 
-//TODO add more cases
 fn map(f: &str) -> Option<fn(&Json) -> Res> {
     match f {
+        "avg" => Some(json_avg),
+        "dev" => Some(json_dev),
+        "first" => Some(|x| Ok(json_first(x))),
+        "flat" => Some(|x| Ok(json_flat(x.clone()))), //TODO remove clone
+        "has" => Some(|x| json_has(x)),
+        "json" => Some(|x| Ok(x.clone())),
+        "last" => Some(|x| Ok(json_last(x))),
+        "len" => Some(|x| Ok(json_len(x))),
         "max" => Some(|x| Ok(json_max(x).cloned().unwrap_or(Json::Null))),
         "min" => Some(|x| Ok(json_min(x).cloned().unwrap_or(Json::Null))),
-        "len" => Some(|x| Ok(json_count(x))),
+        "sum" => Some(|x| Ok(json_sum(x))),
+        "unique" => Some(|x| Ok(json_unique(x))),
+        "var" => Some(|x| json_var(x)),
         _ => None,
     }
 }

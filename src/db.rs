@@ -363,7 +363,7 @@ mod tests {
     }
 
     fn dev(arg: Cmd) -> Cmd {
-        Cmd::StdDev(b(arg))
+        Cmd::Dev(b(arg))
     }
 
     fn var(arg: Cmd) -> Cmd {

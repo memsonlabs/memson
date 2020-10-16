@@ -173,7 +173,7 @@ pub fn eval_cmd(db: &mut InMemDb, cmd: Cmd) -> Res {
         }
         Cmd::Slice(arg, range) => json_slice(eval_cmd(db, *arg)?, range),
         Cmd::Sort(arg, _) => eval_sort_cmd(db, *arg),
-        Cmd::StdDev(arg) => eval_unr_fn(db, *arg, json_dev),
+        Cmd::Dev(arg) => eval_unr_fn(db, *arg, json_dev),
         Cmd::Sub(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, json_sub),
         Cmd::Sum(arg) => eval_unr_fn(db, *arg, |x| Ok(json_sum(x))),
         Cmd::Summary => Ok(db.summary()),

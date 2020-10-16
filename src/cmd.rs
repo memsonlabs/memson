@@ -38,102 +38,102 @@ impl Range {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Cmd {
+    #[serde(rename = "+")]
+    Add(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "&&")]
+    And(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "append")]
     Append(String, Box<Cmd>),
     #[serde(rename = "apply")]
     Apply(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "bar")]
-    Bar(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "set")]
-    Set(String, Box<Cmd>),
-    #[serde(rename = "max")]
-    Max(Box<Cmd>),
-    #[serde(rename = "min")]
-    Min(Box<Cmd>),
     #[serde(rename = "avg")]
     Avg(Box<Cmd>),
+    #[serde(rename = "bar")]
+    Bar(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "del")]
     Delete(String),
-    #[serde(rename = "dev")]
-    StdDev(Box<Cmd>),
-    #[serde(rename = "sum")]
-    Sum(Box<Cmd>),
-    #[serde(rename = "+")]
-    Add(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "-")]
-    Sub(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "*")]
-    Mul(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "/")]
     Div(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "dev")]
+    Dev(Box<Cmd>),
+    #[serde(rename = "eval")]
+    Eval(Vec<Cmd>),
+    #[serde(rename = "==")]
+    Eq(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "first")]
     First(Box<Cmd>),
+    #[serde(rename = "flat")]
+    Flat(Box<Cmd>),
+    #[serde(rename = "get")]
+    Get(String, Box<Cmd>),
+    #[serde(rename = ">")]
+    Gt(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = ">=")]
+    Gte(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "has")]
+    Has(String),
+    #[serde(rename = "in")]
+    In(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "insert")]
+    Insert(String, Vec<JsonObj>),
+    #[serde(rename = "json")]
+    Json(Json),
+    #[serde(rename = "key")]
+    Key(String),
+    #[serde(rename = "keys")]
+    Keys(Option<Range>),
     #[serde(rename = "last")]
     Last(Box<Cmd>),
-    #[serde(rename = "var")]
-    Var(Box<Cmd>),
+    #[serde(rename = "len")]
+    Len(Box<Cmd>),
+    #[serde(rename = "<")]
+    Lt(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "<=")]
+    Lte(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "map")]
+    Map(Box<Cmd>, String),
+    #[serde(rename = "max")]
+    Max(Box<Cmd>),
+    #[serde(rename = "median")]
+    Median(Box<Cmd>),
+    #[serde(rename = "min")]
+    Min(Box<Cmd>),
+    #[serde(rename = "*")]
+    Mul(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "!=")]
+    NotEq(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "numSort")]
+    NumSort(Box<Cmd>, bool),
+    #[serde(rename = "||")]
+    Or(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "push")]
     Push(String, Box<Cmd>),
     #[serde(rename = "pop")]
     Pop(String),
     #[serde(rename = "query")]
     Query(QueryCmd),
-    #[serde(rename = "insert")]
-    Insert(String, Vec<JsonObj>),
-    #[serde(rename = "keys")]
-    Keys(Option<Range>),
-    #[serde(rename = "len")]
-    Len(Box<Cmd>),
-    #[serde(rename = "unique")]
-    Unique(Box<Cmd>),
-    #[serde(rename = "json")]
-    Json(Json),
-    #[serde(rename = "summary")]
-    Summary,
-    #[serde(rename = "get")]
-    Get(String, Box<Cmd>),
-    #[serde(rename = "key")]
-    Key(String),
-    #[serde(rename = "str")]
-    ToString(Box<Cmd>),
-    #[serde(rename = "sort")]
-    Sort(Box<Cmd>, Option<bool>),
     #[serde(rename = "reverse")]
     Reverse(Box<Cmd>),
-    #[serde(rename = "sortBy")]
-    SortBy(Box<Cmd>, String),
-    #[serde(rename = "median")]
-    Median(Box<Cmd>),
-    #[serde(rename = "eval")]
-    Eval(Vec<Cmd>),
-    #[serde(rename = "==")]
-    Eq(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "!=")]
-    NotEq(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = ">")]
-    Gt(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "<")]
-    Lt(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = ">=")]
-    Gte(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "<=")]
-    Lte(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "&&")]
-    And(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "||")]
-    Or(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "map")]
-    Map(Box<Cmd>, String),
-    #[serde(rename = "in")]
-    In(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "flat")]
-    Flat(Box<Cmd>),
-    #[serde(rename = "numSort")]
-    NumSort(Box<Cmd>, bool),
-    #[serde(rename = "has")]
-    Has(String),
+    #[serde(rename = "set")]
+    Set(String, Box<Cmd>),
     #[serde(rename = "slice")]
     Slice(Box<Cmd>, Range),
+    #[serde(rename = "sum")]
+    Sum(Box<Cmd>),
+    #[serde(rename = "-")]
+    Sub(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "summary")]
+    Summary,
+    #[serde(rename = "sort")]
+    Sort(Box<Cmd>, Option<bool>),
+    #[serde(rename = "sortBy")]
+    SortBy(Box<Cmd>, String),
+    #[serde(rename = "str")]
+    ToString(Box<Cmd>),
+    #[serde(rename = "unique")]
+    Unique(Box<Cmd>),
+    #[serde(rename = "var")]
+    Var(Box<Cmd>),
 }
 
 fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
@@ -246,7 +246,7 @@ impl Cmd {
                         "avg" => parse_unr_fn(val, Cmd::Avg),
                         "bar" => parse_bin_fn(val, Cmd::Bar),
                         "del" => parse_unr_str_fn(val, Cmd::Delete),
-                        "dev" => parse_unr_fn(val, Cmd::StdDev),
+                        "dev" => parse_unr_fn(val, Cmd::Dev),
                         "/" | "div" => parse_bin_fn(val, Cmd::Div),
                         "first" => parse_unr_fn(val, Cmd::First),
                         "get" => parse_b_str_fn(val, Cmd::Get),
