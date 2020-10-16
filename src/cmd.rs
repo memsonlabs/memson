@@ -1,7 +1,9 @@
 use crate::err::Error;
 use crate::json::{Json, JsonObj};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+
+pub type Cache = BTreeMap<String, Json>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct QueryCmd {
@@ -11,160 +13,127 @@ pub struct QueryCmd {
     pub by: Option<Box<Cmd>>,
     #[serde(rename = "where")]
     pub filter: Option<Json>,
-    #[serde(rename = "sortBy")]
+    #[serde(rename = "sort")]
     pub sort: Option<String>,
     pub descend: Option<bool>,
 }
 
 impl QueryCmd {
-    fn parse(json: Json) -> Result<Self, Error> {
+    fn parse(json: Json) -> crate::Result<Self> {
         serde_json::from_value(json).map_err(|_| Error::Serialize)
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Range {
+    pub start: Option<usize>,
+    pub size: Option<usize>,
+}
+
+impl Range {
+    pub fn has_indices(&self) -> bool {
+        self.start.is_some() || self.size.is_some()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Cmd {
-    #[serde(rename = "append")]
-    Append(String, Box<Cmd>),
-    #[serde(rename = "bar")]
-    Bar(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "set")]
-    Set(String, Box<Cmd>),
-    #[serde(rename = "max")]
-    Max(Box<Cmd>),
-    #[serde(rename = "min")]
-    Min(Box<Cmd>),
-    #[serde(rename = "avg")]
-    Avg(Box<Cmd>),
-    #[serde(rename = "del")]
-    Delete(String),
-    #[serde(rename = "dev")]
-    StdDev(Box<Cmd>),
-    #[serde(rename = "sum")]
-    Sum(Box<Cmd>),
     #[serde(rename = "+")]
     Add(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "-")]
-    Sub(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "*")]
-    Mul(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "&&")]
+    And(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "append")]
+    Append(String, Box<Cmd>),
+    #[serde(rename = "apply")]
+    Apply(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "avg")]
+    Avg(Box<Cmd>),
+    #[serde(rename = "bar")]
+    Bar(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "del")]
+    Delete(String),
     #[serde(rename = "/")]
     Div(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "dev")]
+    Dev(Box<Cmd>),
+    #[serde(rename = "eval")]
+    Eval(Vec<Cmd>),
+    #[serde(rename = "==")]
+    Eq(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "first")]
     First(Box<Cmd>),
+    #[serde(rename = "flat")]
+    Flat(Box<Cmd>),
+    #[serde(rename = "get")]
+    Get(String, Box<Cmd>),
+    #[serde(rename = ">")]
+    Gt(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = ">=")]
+    Gte(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "has")]
+    Has(String),
+    #[serde(rename = "in")]
+    In(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "insert")]
+    Insert(String, Vec<JsonObj>),
+    #[serde(rename = "json")]
+    Json(Json),
+    #[serde(rename = "key")]
+    Key(String),
+    #[serde(rename = "keys")]
+    Keys(Option<Range>),
     #[serde(rename = "last")]
     Last(Box<Cmd>),
-    #[serde(rename = "var")]
-    Var(Box<Cmd>),
+    #[serde(rename = "len")]
+    Len(Box<Cmd>),
+    #[serde(rename = "<")]
+    Lt(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "<=")]
+    Lte(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "map")]
+    Map(Box<Cmd>, String),
+    #[serde(rename = "max")]
+    Max(Box<Cmd>),
+    #[serde(rename = "median")]
+    Median(Box<Cmd>),
+    #[serde(rename = "min")]
+    Min(Box<Cmd>),
+    #[serde(rename = "*")]
+    Mul(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "!=")]
+    NotEq(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "numSort")]
+    NumSort(Box<Cmd>, bool),
+    #[serde(rename = "||")]
+    Or(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "push")]
     Push(String, Box<Cmd>),
     #[serde(rename = "pop")]
     Pop(String),
     #[serde(rename = "query")]
     Query(QueryCmd),
-    #[serde(rename = "insert")]
-    Insert(String, Vec<JsonObj>),
-    #[serde(rename = "keys")]
-    Keys(Option<usize>),
-    #[serde(rename = "len")]
-    Len(Box<Cmd>),
-    #[serde(rename = "unique")]
-    Unique(Box<Cmd>),
-    #[serde(rename = "json")]
-    Json(Json),
-    #[serde(rename = "summary")]
-    Summary,
-    #[serde(rename = "get")]
-    Get(String, Box<Cmd>),
-    #[serde(rename = "key")]
-    Key(String),
-    #[serde(rename = "str")]
-    ToString(Box<Cmd>),
-    #[serde(rename = "sort")]
-    Sort(Box<Cmd>, Option<bool>),
     #[serde(rename = "reverse")]
     Reverse(Box<Cmd>),
+    #[serde(rename = "set")]
+    Set(String, Box<Cmd>),
+    #[serde(rename = "slice")]
+    Slice(Box<Cmd>, Range),
+    #[serde(rename = "sum")]
+    Sum(Box<Cmd>),
+    #[serde(rename = "-")]
+    Sub(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "summary")]
+    Summary,
+    #[serde(rename = "sort")]
+    Sort(Box<Cmd>, Option<bool>),
     #[serde(rename = "sortBy")]
     SortBy(Box<Cmd>, String),
-    #[serde(rename = "median")]
-    Median(Box<Cmd>),
-    #[serde(rename = "eval")]
-    Eval(Vec<Cmd>),
-    #[serde(rename = "==")]
-    Eq(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "!=")]
-    NotEq(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = ">")]
-    Gt(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "<")]
-    Lt(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = ">=")]
-    Gte(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "<=")]
-    Lte(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "&&")]
-    And(Box<Cmd>, Box<Cmd>),
-    #[serde(rename = "||")]
-    Or(Box<Cmd>, Box<Cmd>),
-}
-
-impl Cmd {
-    pub fn is_read(&self) -> bool {
-        match self {
-            Cmd::Div(lhs, rhs)
-            | Cmd::Mul(lhs, rhs)
-            | Cmd::Bar(lhs, rhs)
-            | Cmd::Add(lhs, rhs)
-            | Cmd::Sub(lhs, rhs)
-            | Cmd::Eq(lhs, rhs)
-            | Cmd::NotEq(lhs, rhs)
-            | Cmd::Lt(lhs, rhs)
-            | Cmd::Gt(lhs, rhs)
-            | Cmd::Lte(lhs, rhs)
-            | Cmd::Gte(lhs, rhs)
-            | Cmd::And(lhs, rhs)
-            | Cmd::Or(lhs, rhs) => {
-                let x = lhs.is_read();
-                let y = rhs.is_read();
-                x && y
-            }
-            Cmd::Reverse(arg)
-            | Cmd::Median(arg)
-            | Cmd::Sort(arg, _)
-            | Cmd::SortBy(arg, _)
-            | Cmd::Last(arg)
-            | Cmd::First(arg)
-            | Cmd::Var(arg)
-            | Cmd::Max(arg)
-            | Cmd::Min(arg)
-            | Cmd::StdDev(arg)
-            | Cmd::Unique(arg)
-            | Cmd::ToString(arg)
-            | Cmd::Avg(arg)
-            | Cmd::Get(_, arg)
-            | Cmd::Sum(arg) => arg.is_read(),
-            Cmd::Push(_, _)
-            | Cmd::Pop(_)
-            | Cmd::Delete(_)
-            | Cmd::Append(_, _)
-            | Cmd::Set(_, _)
-            | Cmd::Insert(_, _) => false,
-            Cmd::Key(_)
-            | Cmd::Json(_)
-            | Cmd::Summary
-            | Cmd::Keys(_)
-            | Cmd::Len(_)
-            | Cmd::Query(_) => true,
-            Cmd::Eval(cmds) => {
-                for cmd in cmds {
-                    if !cmd.is_read() {
-                        return false;
-                    }
-                }
-                true
-            }
-        }
-    }
+    #[serde(rename = "str")]
+    ToString(Box<Cmd>),
+    #[serde(rename = "unique")]
+    Unique(Box<Cmd>),
+    #[serde(rename = "var")]
+    Var(Box<Cmd>),
 }
 
 fn parse_bin_fn<F>(arg: Json, f: F) -> Result<Cmd, Error>
@@ -248,16 +217,21 @@ where
 {
     match arg {
         Json::String(s) => Ok(f(s)),
-        _ => Err(Error::BadKey),
+        val => Err(Error::BadArg(val)),
     }
 }
 
 impl Cmd {
+    pub fn parse_line(line: &str) -> Result<Self, Error> {
+        let val = serde_json::from_str(line).map_err(|_| Error::BadIO)?;
+        Self::parse(val)
+    }
+
     pub fn parse(json: Json) -> Result<Self, Error> {
         match json {
             Json::Object(obj) => {
                 if obj.len() == 1 {
-                    let (key, val) = obj.clone().into_iter().next().unwrap();
+                    let (key, mut val): (String, Json) = obj.clone().into_iter().next().unwrap();
                     match key.as_ref() {
                         "&&" => parse_bin_fn(val, Cmd::And),
                         "==" => parse_bin_fn(val, Cmd::Eq),
@@ -272,14 +246,24 @@ impl Cmd {
                         "avg" => parse_unr_fn(val, Cmd::Avg),
                         "bar" => parse_bin_fn(val, Cmd::Bar),
                         "del" => parse_unr_str_fn(val, Cmd::Delete),
-                        "dev" => parse_unr_fn(val, Cmd::StdDev),
+                        "dev" => parse_unr_fn(val, Cmd::Dev),
                         "/" | "div" => parse_bin_fn(val, Cmd::Div),
                         "first" => parse_unr_fn(val, Cmd::First),
                         "get" => parse_b_str_fn(val, Cmd::Get),
                         "insert" => parse_insert(val),
                         "key" => parse_unr_str_fn(val, Cmd::Key),
+                        "has" => parse_unr_str_fn(val, Cmd::Has),
                         "last" => parse_unr_fn(val, Cmd::Last),
                         "len" => parse_unr_fn(val, Cmd::Len),
+                        "flat" => parse_unr_fn(val, Cmd::Flat),
+                        "map" => {
+                            let arr = val.as_array_mut().ok_or(Error::ExpectedArr)?;
+                            let val = arr.remove(1);
+                            let val_str = val.as_str().map(|x| x.to_string());
+                            let f = val_str.ok_or(Error::BadArg(val))?;
+                            let arg = Cmd::parse(arr.remove(0))?;
+                            Ok(Cmd::Map(Box::new(arg), f))
+                        }
                         "max" => parse_unr_fn(val, Cmd::Max),
                         "median" => parse_unr_fn(val, Cmd::Median),
                         "min" => parse_unr_fn(val, Cmd::Min),
@@ -328,22 +312,6 @@ impl Cmd {
                 Cmd::Json(Json::from(s))
             }),
             val => Ok(Cmd::Json(val)),
-        }
-    }
-
-    pub fn is_aggregate(&self) -> bool {
-        match self {
-            Cmd::Avg(_)
-            | Cmd::Max(_)
-            | Cmd::First(_)
-            | Cmd::Min(_)
-            | Cmd::StdDev(_)
-            | Cmd::Last(_)
-            | Cmd::Sum(_)
-            | Cmd::Var(_)
-            | Cmd::Unique(_)
-            | Cmd::Len(_) => true,
-            _ => false,
         }
     }
 }
@@ -416,5 +384,14 @@ fn cmd_parse_sort_ascend() {
     let val = json!({"sort": {"key": "k"}});
     let cmd = Cmd::parse(val.clone()).unwrap();
     let exp = Cmd::Sort(Box::new(Cmd::Key("k".to_string())), None);
+    assert_eq!(exp, cmd);
+}
+
+#[test]
+fn cmd_parse_map() {
+    use serde_json::json;
+    let val = json!({"map": [{"key": "k"}, "len"]});
+    let cmd = Cmd::parse(val.clone()).unwrap();
+    let exp = Cmd::Map(Box::new(Cmd::Key("k".to_string())), "len".to_string());
     assert_eq!(exp, cmd);
 }

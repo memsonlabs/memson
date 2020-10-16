@@ -4,14 +4,29 @@ version = "0.1.0"
 authors = ["jaupe <jaupe@protonmail.com>"]
 edition = "2018"
 
-[dependencies]
+[[bin]]
+name = "memson-cli"
+path = "src/bin/cli.rs"
 
+[[bin]]
+name = "memson-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "memson-http"
+path = "src/bin/web.rs"
+
+[dependencies]
+actix = "0.10.0"
 actix-web = "3"
-actix-rt = "*"
-env_logger = "*"
-rayon = "*"
+actix-rt = "1.*"
+futures = "0.3"
+rayon = "1.*"
+rustyline = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
+tokio = { version = "*", features = ["full"] }
+tokio-util = { version = "*", features = ["codec"] }
 
 [dev-dependencies]
 assert_approx_eq = "*"
