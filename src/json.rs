@@ -831,10 +831,9 @@ fn map(f: &str) -> Option<fn(&Json) -> Res> {
         "dev" => Some(json_dev),
         "first" => Some(|x| Ok(json_first(x))),
         "flat" => Some(|x| Ok(json_flat(x.clone()))), //TODO remove clone
-        "has" => Some(|x| json_has(x)),
         "json" => Some(|x| Ok(x.clone())),
         "last" => Some(|x| Ok(json_last(x))),
-        "len" => Some(|x| Ok(json_len(x))),
+        "len" => Some(|x| Ok(json_count(x))),
         "max" => Some(|x| Ok(json_max(x).cloned().unwrap_or(Json::Null))),
         "min" => Some(|x| Ok(json_min(x).cloned().unwrap_or(Json::Null))),
         "sum" => Some(|x| Ok(json_sum(x))),
@@ -842,6 +841,23 @@ fn map(f: &str) -> Option<fn(&Json) -> Res> {
         "var" => Some(|x| json_var(x)),
         _ => None,
     }
+}
+
+pub fn json_has(val: &Json, key: &str) -> Json {
+    match val {
+        Json::Array(arr) => arr_has(arr, key),
+        Json::Object(map) => obj_has(map, key),
+        _ => Json::from(false)
+    }
+}
+
+pub fn arr_has(arr: &[Json], key: &str) -> Json {
+    let v = arr.par_iter().map(|x| x.get(key).is_some()).map(Json::Bool).collect();
+    Json::Array(v)
+}
+
+pub fn obj_has(obj: &JsonObj, key: &str) -> Json {
+    Json::Bool(obj.get(key).is_some())
 }
 
 pub fn json_in(lhs: &Json, rhs: &Json) -> Json {

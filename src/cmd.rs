@@ -19,7 +19,7 @@ pub struct QueryCmd {
 }
 
 impl QueryCmd {
-    fn parse(json: Json) -> crate::Result<Self> {
+    fn parse(json: Json) -> Result<Self, Error> {
         serde_json::from_value(json).map_err(|_| Error::Serialize)
     }
 }

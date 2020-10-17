@@ -1,13 +1,22 @@
 use actix::prelude::*;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
-use memson::cmd::{Cmd, QueryCmd};
-use memson::db::InMemDb;
-use memson::json::Json;
-use memson::Error;
+use crate::cmd::{Cmd, QueryCmd};
+use crate::db::InMemDb;
+use crate::json::Json;
+use crate::err::Error;
 use serde::Serialize;
-use serde_json::json;
 use std::env;
 use std::fmt::Debug;
+
+pub mod apply;
+pub mod cmd;
+pub mod db;
+pub mod err;
+pub mod eval;
+pub mod json;
+pub const DEFAULT_PORT: &str = "8888";
+
+type Res = Result<Json, Error>;
 
 /// Define message
 #[derive(Message)]
@@ -22,6 +31,7 @@ struct DbActor {
     db: InMemDb,
 }
 
+// implementation of actor for db
 impl Actor for DbActor {
     type Context = Context<Self>;
 
@@ -36,7 +46,7 @@ impl Actor for DbActor {
 
 /// Define handler for `Ping` message
 impl Handler<Request> for DbActor {
-    type Result = Result<Json, Error>;
+    type Result = Res;
 
     fn handle(&mut self, req: Request, _: &mut Context<Self>) -> Self::Result {
         match req {
@@ -75,10 +85,6 @@ async fn query2(db: web::Data<Addr<DbActor>>, cmd: web::Json<QueryCmd>) -> HttpR
     http_resp(r)
 }
 
-fn orders(n: usize) -> Json {
-    Json::Array((0..n).map(|i| json!({"id": i, "qty": i % 100})).collect())
-}
-
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
@@ -89,8 +95,7 @@ async fn main() -> std::io::Result<()> {
     let addr = host + ":" + &port;
     println!("memson is starting on {}", addr);
 
-    let mut db = InMemDb::new();
-    db.set("orders", orders(4_000_000));
+    let db = InMemDb::new();
 
     let actor = DbActor { db };
     let actor_addr = actor.start();

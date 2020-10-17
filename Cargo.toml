@@ -4,18 +4,6 @@ version = "0.1.0"
 authors = ["jaupe <jaupe@protonmail.com>"]
 edition = "2018"
 
-[[bin]]
-name = "memson-cli"
-path = "src/bin/cli.rs"
-
-[[bin]]
-name = "memson-server"
-path = "src/bin/server.rs"
-
-[[bin]]
-name = "memson-http"
-path = "src/bin/web.rs"
-
 [dependencies]
 actix = "0.10.0"
 actix-web = "3"
