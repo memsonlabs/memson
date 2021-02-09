@@ -1,19 +1,21 @@
+use crate::cmd::{Cmd, QueryCmd};
+use crate::err::Error;
+use crate::json::Json;
 use actix::prelude::*;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
-use crate::cmd::{Cmd, QueryCmd};
-use crate::db::InMemDb;
-use crate::json::Json;
-use crate::err::Error;
 use serde::Serialize;
 use std::env;
 use std::fmt::Debug;
+use crate::db::Memson;
 
 pub mod apply;
 pub mod cmd;
 pub mod db;
 pub mod err;
 pub mod eval;
+pub mod inmem;
 pub mod json;
+pub mod ondisk;
 pub const DEFAULT_PORT: &str = "8888";
 
 type Res = Result<Json, Error>;
@@ -28,7 +30,7 @@ enum Request {
 
 // Define actor
 struct DbActor {
-    db: InMemDb,
+    db: Memson,
 }
 
 // implementation of actor for db
@@ -91,11 +93,14 @@ async fn main() -> std::io::Result<()> {
 
     let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = env::var("PORT").unwrap_or_else(|_| "8686".to_string());
+    let db_path = env::var("DB_PATH").unwrap_or_else(|_| "memson".to_string());
 
     let addr = host + ":" + &port;
     println!("memson is starting on {}", addr);
-
-    let db = InMemDb::new();
+    let db = match Memson::open(db_path) {
+        Ok(db) => db,
+        Err(_) => panic!("cannot open memson"),
+    };
 
     let actor = DbActor { db };
     let actor_addr = actor.start();

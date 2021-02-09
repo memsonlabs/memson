@@ -1,6 +1,7 @@
 use crate::apply::apply;
 use crate::cmd::{Cmd, QueryCmd};
-use crate::db::{InMemDb, Query};
+use crate::inmem::{InMemDb};
+use crate::db::Query;
 use crate::json::*;
 use crate::Error;
 use crate::Res;

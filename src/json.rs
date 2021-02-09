@@ -360,6 +360,8 @@ pub fn json_max(val: &Json) -> Option<&Json> {
 /// adds two json values together.
 pub fn json_add(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
+        (Json::Null, _) => Ok(Json::Null),
+        (_, Json::Null) => Ok(Json::Null),
         (Json::Array(lhs), Json::Array(rhs)) => json_add_arrs(lhs, rhs),
         (Json::Array(lhs), rhs) => json_add_arr_val(lhs, rhs),
         (lhs, Json::Array(rhs)) => json_add_val_arr(lhs, rhs),
@@ -600,12 +602,12 @@ fn json_add_val_arr(x: &Json, y: &[Json]) -> Result<Json, Error> {
 }
 
 fn json_add_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
-    let vec = lhs
+    let vec: Result<Vec<Json>, _> = lhs
         .iter()
         .zip(rhs.iter())
-        .map(|(x, y)| json_add(x, y).unwrap())
+        .map(|(x, y)| json_add(x, y))
         .collect();
-    Ok(Json::Array(vec))
+    Ok(Json::Array(vec?))
 }
 
 pub(crate) fn json_add_nums(x: &JsonNum, y: &JsonNum) -> JsonNum {
@@ -847,12 +849,16 @@ pub fn json_has(val: &Json, key: &str) -> Json {
     match val {
         Json::Array(arr) => arr_has(arr, key),
         Json::Object(map) => obj_has(map, key),
-        _ => Json::from(false)
+        _ => Json::from(false),
     }
 }
 
 pub fn arr_has(arr: &[Json], key: &str) -> Json {
-    let v = arr.par_iter().map(|x| x.get(key).is_some()).map(Json::Bool).collect();
+    let v = arr
+        .par_iter()
+        .map(|x| x.get(key).is_some())
+        .map(Json::Bool)
+        .collect();
     Json::Array(v)
 }
 
@@ -918,16 +924,14 @@ pub fn json_fold_add(x: Json, y: &Json) -> Json {
                 Json::Number(y.clone())
             }
         }
-        _ => x
+        _ => x,
     }
 }
 
 pub fn json_reduce_add(x: Json, y: Json) -> Json {
     match (x, y) {
-        (Json::Number(x), Json::Number(y)) => {
-            Json::Number(json_add_nums(&x, &y))
-        }
-        (x, _) => x
+        (Json::Number(x), Json::Number(y)) => Json::Number(json_add_nums(&x, &y)),
+        (x, _) => x,
     }
 }
 

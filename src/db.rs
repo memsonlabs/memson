@@ -1,14 +1,46 @@
 use crate::apply::apply_rows;
-use crate::cmd::{Cache, Cmd, QueryCmd, Range};
+use crate::cmd::{Cmd, QueryCmd};
 use crate::err::Error;
 use crate::eval::*;
+use crate::inmem::InMemDb;
 use crate::json::*;
-use crate::Res;
+use crate::ondisk::OnDiskDb;
 use rayon::prelude::*;
 use serde_json::{Value as Json, Value};
 use std::collections::HashMap;
+use std::path::Path;
 
 pub(crate) const PAGE_SIZE: usize = 50;
+
+pub struct Memson {
+    mem_db: InMemDb,
+    disk_db: OnDiskDb,
+}
+
+impl Memson {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        let disk_db = OnDiskDb::open(path)?;
+        let mem_db = InMemDb::load(&disk_db)?;
+        Ok(Self { mem_db, disk_db })
+    }
+
+    pub(crate) fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
+        match cmd {
+            Cmd::Set(key, arg) => {
+                let val = self.eval(*arg)?;
+                match self.disk_db.set(&key, &val)? {
+                    Some(val) => Ok(val),
+                    None => Ok(Json::Null),
+                }
+            }
+            cmd => self.mem_db.eval(cmd),
+        }
+    }
+
+    pub(crate) fn query(&mut self, cmd: QueryCmd) -> Result<Json, Error> {
+        self.mem_db.query(cmd)
+    }
+}
 
 pub struct Query<'a> {
     pub(crate) db: &'a InMemDb,
@@ -32,117 +64,7 @@ impl<'a> Rows<'a> {
     }
 }
 
-/// The in-memory database of memson
-#[derive(Debug, Default)]
-pub struct InMemDb {
-    cache: Cache,
-}
 
-impl InMemDb {
-    /// retrieves the val of the ke/val entry
-    fn key(&self, key: String) -> Result<Json, Error> {
-        self.cache.get(&key).cloned().ok_or(Error::BadKey(key))
-    }
-
-    /// the paginated keys of entried in memson
-    pub fn keys(&self, range: Option<Range>) -> Vec<Json> {
-        if let Some(range) = range {
-            let start = range.start.unwrap_or(0);
-            let size = range.size.unwrap_or(PAGE_SIZE);
-            self.cache
-                .keys()
-                .skip(start)
-                .take(size)
-                .cloned()
-                .map(Json::from)
-                .collect()
-        } else {
-            self.cache
-                .keys()
-                .take(PAGE_SIZE)
-                .cloned()
-                .map(Json::from)
-                .collect()
-        }
-    }
-
-    /// delete an entry by key and return the previous value if exists
-    pub fn delete(&mut self, key: &str) -> Option<Json> {
-        self.cache.remove(key)
-    }
-
-    //TODO remove allocations
-    /// eval key command that supports nesting
-    pub fn eval_key(&self, key: String) -> Res {
-        let mut it = key.split('.');
-        let key = it.next().ok_or_else(|| Error::BadKey(key.clone()))?;
-        let mut val = self.key(key.to_string())?;
-        for key in it {
-            if let Some(v) = json_get(key, &val) {
-                val = v;
-            } else {
-                return Err(Error::BadKey(key.to_string()));
-            }
-        }
-        Ok(val)
-    }
-
-    /// has checks if the key is contained in memson or not
-    pub fn has(&self, key: &str) -> bool {
-        self.cache.contains_key(key)
-    }
-
-    /// get a key/val entry; similar to key but takes a reference to a string
-    pub fn get(&self, key: &str) -> Result<&Json, Error> {
-        self.cache
-            .get(key)
-            .ok_or_else(|| Error::BadKey(key.to_string()))
-    }
-
-    /// get a key/val entry; similar to key but takes a reference to a string
-    pub fn get_mut(&mut self, key: &str) -> Result<&mut Json, Error> {
-        self.cache
-            .get_mut(key)
-            .ok_or_else(|| Error::BadKey(key.to_string()))
-    }
-
-    /// inserts a new key/val entry
-    pub fn set<K: Into<String>>(&mut self, key: K, val: Json) -> Option<Json> {
-        self.cache.insert(key.into(), val)
-    }
-
-    /// evaluate a command
-    pub fn eval(&mut self, cmd: Cmd) -> Res {
-        eval_cmd(self, cmd)
-    }
-
-    /// create a new instance of the in-memory database with no entries
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// retrieves a key/val entry and if not present, it inserts an entry
-    pub fn entry<K: Into<String>>(&mut self, key: K) -> &mut Json {
-        self.cache.entry(key.into()).or_insert_with(|| Json::Null)
-    }
-
-    /// summary of keys stored and no. of entries
-    pub fn summary(&self) -> Json {
-        let no_entries = Json::from(self.cache.len());
-        let keys: Vec<Json> = self
-            .cache
-            .keys()
-            .map(|x| Json::String(x.to_string()))
-            .collect();
-        json!({"no_entries": no_entries, "keys": keys})
-    }
-
-    /// execute query
-    pub fn query(&self, cmd: QueryCmd) -> Res {
-        let qry = Query::from(&self, cmd);
-        qry.exec()
-    }
-}
 
 /// merge two groupby maps together. if key exists in both then the array are merged together.
 fn merge_grouping(
@@ -412,23 +334,44 @@ mod tests {
         db.set("i", json!(2));
         db.set("f", json!(3.3));
         db.set("ia", json!([1, 2, 3, 4, 5]));
+        db.set("nia", json!([Json::Null, 2, Json::Null, 4, 5]));
+        db.set("nfa", json!([1, Json::Null, 3, Json::Null, 5]));
         db.set("fa", json!([1.1, 2.2, 3.3, 4.4, 5.5]));
         db.set("x", json!(4));
         db.set("y", json!(5));
         db.set("s", json!("hello"));
         db.set("sa", json!(["a", "b", "c", "d"]));
         db.set("t", table_data());
+        db.set("n", Json::Null);
         db.set("orders", orders_val());
+    }
+
+    #[test]
+    fn load_data() {
+        let path = "testdata";
+        let data = json!([
+                { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+                { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+                { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+                { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+                { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
+        ]);
+        {
+            let ondisk_db = OnDiskDb::open(path).unwrap();
+            ondisk_db.set("customers", &data).unwrap();
+        }
+        let mut memson = Memson::open(path).unwrap();
+        assert_eq!(Ok(data), memson.eval(Cmd::Key("customers".to_string())));
     }
 
     #[test]
     fn select_all_from_orders() {
         let exp = json!([
-            json!({ "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 }),
-            json!({ "time": 1, "customer": "ania", "qty": 2, "price": 2.0 }),
-            json!({ "time": 2, "customer": "misha", "qty": 4, "price": 1.0 }),
-            json!({ "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 }),
-            json!({ "time": 4, "customer": "james", "qty": 1, "price": 16.0 }),
+            { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+            { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+            { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+            { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+            { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
         ]);
         assert_eq!(Ok(exp), query(json!({"from": "orders"})));
     }
@@ -757,6 +700,28 @@ mod tests {
         );
 
         assert_eq!(
+            Ok(Json::from(vec![
+                Json::Null,
+                Json::from(4),
+                Json::Null,
+                Json::from(6),
+                Json::from(7),
+            ])),
+            eval(add(key("nia"), key("i")))
+        );
+
+        assert_eq!(
+            Ok(Json::from(vec![
+                Json::Null,
+                Json::Null,
+                Json::Null,
+                Json::Null,
+                Json::from(10),
+            ])),
+            eval(add(key("nia"), key("nfa")))
+        );
+
+        assert_eq!(
             Ok(Json::Array(vec![
                 Json::from("ahello"),
                 Json::from("bhello"),
@@ -840,7 +805,7 @@ mod tests {
         assert_eq!(Ok(Json::from(arr.clone())), eval(mul(key("ia"), key("y"))));
         assert_eq!(Ok(Json::from(arr)), eval(mul(key("y"), key("ia"))));
         assert_eq!(
-            Ok(Json::from(vec![
+            Ok(Json::Array(vec![
                 Json::from(1),
                 Json::from(4),
                 Json::from(9),
@@ -899,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn open_db() {
+    fn eval_cmds() {
         assert_eq!(Ok(Json::Bool(true)), eval(key("b")));
         assert_eq!(
             eval(key("ia")),
