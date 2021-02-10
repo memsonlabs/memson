@@ -1,12 +1,16 @@
 use crate::cmd::{Cmd, Range};
-use crate::json::{gt, gte, json_add2, json_and, json_bar, json_gt, json_gte, json_lt, json_lte, json_map, json_median, json_not_eq, json_or, json_slice, json_sort, json_sortby, json_var, lt, lte, noteq, json_numsort, Json, json_fold_add, json_reduce_add};
+use crate::db::PAGE_SIZE;
+use crate::json::{
+    gt, gte, json_add2, json_and, json_bar, json_fold_add, json_gt, json_gte, json_lt, json_lte,
+    json_map, json_median, json_not_eq, json_numsort, json_or, json_reduce_add, json_slice,
+    json_sort, json_sortby, json_var, lt, lte, noteq, Json,
+};
 use crate::json::{
     json_add, json_avg, json_count, json_dev, json_div, json_eq, json_first, json_flat, json_get,
     json_in, json_last, json_max, json_min, json_mul, json_reverse, json_sub, json_sum,
     json_tostring, json_unique,
 };
 use crate::{Error, Res};
-use crate::db::PAGE_SIZE;
 use rayon::prelude::*;
 
 /// retrieves the key/val entry from a row by key
@@ -160,11 +164,14 @@ fn apply_keys(page: Option<Range>, rows: &[Json]) -> Res {
     if let Some(page) = page {
         let start = page.start.unwrap_or(0);
         let n = page.size.unwrap_or(PAGE_SIZE);
-        Ok(Json::Array(rows.par_iter().skip(start).take(n).cloned().collect()))
+        Ok(Json::Array(
+            rows.par_iter().skip(start).take(n).cloned().collect(),
+        ))
     } else {
-        Ok(Json::Array(rows.par_iter().take(PAGE_SIZE).cloned().collect()))
+        Ok(Json::Array(
+            rows.par_iter().take(PAGE_SIZE).cloned().collect(),
+        ))
     }
-
 }
 
 fn apply_numsort(arg: Cmd, descend: bool, rows: &[Json]) -> Res {
@@ -256,7 +263,10 @@ fn apply_sum2(arg: Cmd, val: &Json) -> Res {
     match arg {
         Cmd::Key(_key) => {
             if let Some(arr) = val.as_array() {
-                let val: Json = arr.par_iter().fold(|| Json::from(0), json_fold_add).reduce(|| Json::from(0), json_reduce_add);
+                let val: Json = arr
+                    .par_iter()
+                    .fold(|| Json::from(0), json_fold_add)
+                    .reduce(|| Json::from(0), json_reduce_add);
                 Ok(val)
             } else if val.is_number() {
                 Ok(val.clone())

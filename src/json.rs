@@ -847,12 +847,16 @@ pub fn json_has(val: &Json, key: &str) -> Json {
     match val {
         Json::Array(arr) => arr_has(arr, key),
         Json::Object(map) => obj_has(map, key),
-        _ => Json::from(false)
+        _ => Json::from(false),
     }
 }
 
 pub fn arr_has(arr: &[Json], key: &str) -> Json {
-    let v = arr.par_iter().map(|x| x.get(key).is_some()).map(Json::Bool).collect();
+    let v = arr
+        .par_iter()
+        .map(|x| x.get(key).is_some())
+        .map(Json::Bool)
+        .collect();
     Json::Array(v)
 }
 
@@ -918,16 +922,14 @@ pub fn json_fold_add(x: Json, y: &Json) -> Json {
                 Json::Number(y.clone())
             }
         }
-        _ => x
+        _ => x,
     }
 }
 
 pub fn json_reduce_add(x: Json, y: Json) -> Json {
     match (x, y) {
-        (Json::Number(x), Json::Number(y)) => {
-            Json::Number(json_add_nums(&x, &y))
-        }
-        (x, _) => x
+        (Json::Number(x), Json::Number(y)) => Json::Number(json_add_nums(&x, &y)),
+        (x, _) => x,
     }
 }
 

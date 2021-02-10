@@ -1,9 +1,9 @@
-use actix::prelude::*;
-use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use crate::cmd::{Cmd, QueryCmd};
 use crate::db::InMemDb;
-use crate::json::Json;
 use crate::err::Error;
+use crate::json::Json;
+use actix::prelude::*;
+use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use serde::Serialize;
 use std::env;
 use std::fmt::Debug;
