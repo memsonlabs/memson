@@ -18,9 +18,7 @@ impl OnDiskDb {
         let iv: Option<sled::IVec> = self
             .sled
             .insert(key.as_bytes(), bytes)
-            .map_err(|_| {
-                Error::BadIO
-            })?;
+            .map_err(|_| Error::BadIO)?;
         match iv {
             Some(v) => ivec_to_json_opt(&v),
             None => Ok(None),

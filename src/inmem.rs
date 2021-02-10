@@ -3,7 +3,7 @@ use crate::db::{Query, PAGE_SIZE};
 use crate::err::Error;
 use crate::eval::eval_cmd;
 use crate::json::{json_get, Json};
-use crate::ondisk::{OnDiskDb, ivec_to_json};
+use crate::ondisk::{ivec_to_json, OnDiskDb};
 use crate::Res;
 use serde_json::json;
 use std::collections::BTreeMap;

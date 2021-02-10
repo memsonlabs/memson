@@ -64,8 +64,6 @@ impl<'a> Rows<'a> {
     }
 }
 
-
-
 /// merge two groupby maps together. if key exists in both then the array are merged together.
 fn merge_grouping(
     mut x: HashMap<String, Vec<Json>>,
