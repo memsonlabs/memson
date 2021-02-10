@@ -1,9 +1,7 @@
 use crate::err::Error;
 use crate::json::{Json, JsonObj};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-
-pub type Cache = BTreeMap<String, Json>;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct QueryCmd {

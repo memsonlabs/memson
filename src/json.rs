@@ -360,6 +360,8 @@ pub fn json_max(val: &Json) -> Option<&Json> {
 /// adds two json values together.
 pub fn json_add(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
     match (lhs, rhs) {
+        (Json::Null, _) => Ok(Json::Null),
+        (_, Json::Null) => Ok(Json::Null),
         (Json::Array(lhs), Json::Array(rhs)) => json_add_arrs(lhs, rhs),
         (Json::Array(lhs), rhs) => json_add_arr_val(lhs, rhs),
         (lhs, Json::Array(rhs)) => json_add_val_arr(lhs, rhs),
@@ -600,12 +602,12 @@ fn json_add_val_arr(x: &Json, y: &[Json]) -> Result<Json, Error> {
 }
 
 fn json_add_arrs(lhs: &[Json], rhs: &[Json]) -> Result<Json, Error> {
-    let vec = lhs
+    let vec: Result<Vec<Json>, _> = lhs
         .iter()
         .zip(rhs.iter())
-        .map(|(x, y)| json_add(x, y).unwrap())
+        .map(|(x, y)| json_add(x, y))
         .collect();
-    Ok(Json::Array(vec))
+    Ok(Json::Array(vec?))
 }
 
 pub(crate) fn json_add_nums(x: &JsonNum, y: &JsonNum) -> JsonNum {

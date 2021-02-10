@@ -5,16 +5,14 @@ authors = ["jaupe <jaupe@protonmail.com>"]
 edition = "2018"
 
 [dependencies]
-actix = "0.10.0"
-actix-web = "3"
-actix-rt = "1.*"
-futures = "0.3"
-rayon = "1.*"
-rustyline = "*"
+actix = "*"
+actix-web = "*"
+actix-rt = "*"
+bincode = "*"
+rayon = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
-tokio = { version = "*", features = ["full"] }
-tokio-util = { version = "*", features = ["codec"] }
+sled = "*"
 
 [dev-dependencies]
 assert_approx_eq = "*"
