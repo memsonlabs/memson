@@ -820,11 +820,8 @@ pub fn json_str(val: &Json) -> String {
     }
 }
 
-pub fn json_median(val: &mut Json) -> Result<Json, Error> {
-    match val {
-        Json::Array(ref mut _arr) => todo!("sort the array then "),
-        _ => Err(Error::ExpectedArr),
-    }
+pub fn json_median(_val: &Json) -> Result<Json, Error> {
+    unimplemented!()
 }
 
 fn map(f: &str) -> Option<fn(&Json) -> Res> {

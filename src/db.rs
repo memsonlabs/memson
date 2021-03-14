@@ -326,6 +326,16 @@ mod tests {
         ])
     }
 
+    fn orders2_val() -> Json {
+        json!([
+                { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10, "address": {"line1": "23 garden close", "city": "london", "country": "gb"} },
+                { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
+                { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
+                { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
+                { "time": 4, "customer": "james", "qty": 1, "price": 16.0 },
+        ])
+    }
+
     fn insert_data(db: &mut InMemDb) {
         db.set("a", json!([1, 2, 3, 4, 5]));
         db.set("b", json!(true));
@@ -342,6 +352,7 @@ mod tests {
         db.set("t", table_data());
         db.set("n", Json::Null);
         db.set("orders", orders_val());
+        db.set("orders2", orders2_val());
     }
 
     #[test]
@@ -365,7 +376,7 @@ mod tests {
     #[test]
     fn select_all_from_orders() {
         let exp = json!([
-            { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10 },
+            { "time": 0, "customer": "james", "qty": 2, "price": 9.0, "discount": 10},
             { "time": 1, "customer": "ania", "qty": 2, "price": 2.0 },
             { "time": 2, "customer": "misha", "qty": 4, "price": 1.0 },
             { "time": 3, "customer": "james", "qty": 10, "price": 16.0, "discount": 20 },
@@ -859,6 +870,17 @@ mod tests {
         assert_eq!(bad_type(), eval(div(key("s"), key("sa"))));
         assert_eq!(bad_type(), eval(div(key("i"), key("s"))));
         assert_eq!(bad_type(), eval(div(key("s"), key("i"))));
+    }
+
+    #[test]
+    fn test_eval_key() {
+        assert_eq!(Ok(orders2_val()), eval(key("orders2")));
+        assert_eq!(Ok(json!([0,1,2,3,4])), eval(key("orders2.time")));
+        assert_eq!(Ok(json!(["james", "ania", "misha", "james", "james"])), eval(key("orders2.customer")));
+        assert_eq!(Ok(json!([2,2,4,10,1])), eval(key("orders2.qty")));
+        assert_eq!(Ok(json!([9.0, 2.0, 1.0, 16.0, 16.0])), eval(key("orders2.price")));
+        assert_eq!(Ok(json!([10, Json::Null, Json::Null, 20, Json::Null])), eval(key("orders2.discount")));
+        assert_eq!(Ok(json!(["23 garden close", Json::Null, Json::Null, Json::Null, Json::Null])), eval(key("orders2.address.line1")));
     }
 
     #[test]
