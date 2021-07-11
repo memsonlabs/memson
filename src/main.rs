@@ -1,7 +1,7 @@
 use crate::cmd::{Cmd, QueryCmd};
 use crate::db::Memson;
 use crate::err::Error;
-use crate::json::Json;
+use crate::json::{Json, JsonVal};
 use actix::prelude::*;
 use actix_web::{middleware, web, App, HttpResponse, HttpServer};
 use serde::Serialize;
@@ -18,7 +18,8 @@ pub mod json;
 pub mod ondisk;
 pub const DEFAULT_PORT: &str = "8888";
 
-type Res = Result<Json, Error>;
+type Res<'a> = Result<JsonVal<'a>, Error>;
+
 
 /// Define message
 #[derive(Message)]
@@ -48,7 +49,7 @@ impl Actor for DbActor {
 
 /// Define handler for `Ping` message
 impl Handler<Request> for DbActor {
-    type Result = Res;
+    type Result = Result<Json, Error>;
 
     fn handle(&mut self, req: Request, _: &mut Context<Self>) -> Self::Result {
         match req {
@@ -71,7 +72,8 @@ async fn summary(tx: web::Data<Addr<DbActor>>) -> HttpResponse {
     http_resp(res)
 }
 
-async fn eval2(db: web::Data<Addr<DbActor>>, cmd: web::Json<Json>) -> HttpResponse {
+
+async fn eval2(db: web::Data<Addr<DbActor>>, cmd: web::Json<serde_json::Value>) -> HttpResponse {
     let cmd = match Cmd::parse(cmd.0) {
         Ok(cmd) => cmd,
         Err(err) => return HttpResponse::InternalServerError().json(err.to_string()),

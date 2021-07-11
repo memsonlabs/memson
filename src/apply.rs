@@ -27,9 +27,9 @@ where
 }
 
 /// apply a binary function
-fn apply_bin_fn<F>(lhs: Cmd, rhs: Cmd, rows: &[Json], f: F) -> Res
+fn apply_bin_fn<'a, F>(lhs: Cmd, rhs: Cmd, rows: &[Json], f: F) -> Res
 where
-    F: FnOnce(&Json, &Json) -> Res,
+    F: FnOnce(&'a Json, &'a Json) -> Res<'a>,
 {
     let x = apply_rows(lhs, rows)?;
     let y = apply_rows(rhs, rows)?;

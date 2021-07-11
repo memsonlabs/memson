@@ -1,3 +1,4 @@
+use crate::json::JsonVal;
 use crate::cmd::{Cmd, QueryCmd, Range};
 use crate::db::{Query, PAGE_SIZE};
 use crate::err::Error;
@@ -93,7 +94,7 @@ impl InMemDb {
     }
 
     /// evaluate a command
-    pub fn eval(&mut self, cmd: Cmd) -> Res {
+    pub fn eval(&mut self, cmd: Cmd) -> Result<JsonVal, Error> {
         eval_cmd(self, cmd)
     }
 
@@ -121,7 +122,7 @@ impl InMemDb {
     }
 
     /// execute query
-    pub fn query(&self, cmd: QueryCmd) -> Res {
+    pub fn query(&self, cmd: QueryCmd) -> Result<Json, Error> {
         let qry = Query::from(&self, cmd);
         qry.exec()
     }

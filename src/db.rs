@@ -24,13 +24,14 @@ impl Memson {
         Ok(Self { mem_db, disk_db })
     }
 
-    pub(crate) fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
+    pub(crate) fn eval<'a>(&'a mut self, cmd: Cmd) -> Result<JsonVal<'a>, Error> {
         match cmd {
             Cmd::Set(key, arg) => {
                 let val = self.eval(*arg)?;
-                match self.disk_db.set(&key, &val)? {
-                    Some(val) => Ok(val),
-                    None => Ok(Json::Null),
+                
+                match self.disk_db.set(&key, val.as_ref())? {
+                    Some(val) => Ok(JsonVal::Val(val)),
+                    None => Ok(JsonVal::Val(Json::Null)),
                 }
             }
             cmd => self.mem_db.eval(cmd),

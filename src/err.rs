@@ -1,4 +1,4 @@
-use crate::Json;
+use crate::json::Json;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]

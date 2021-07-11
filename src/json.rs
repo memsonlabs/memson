@@ -1,5 +1,4 @@
 use crate::err::Error;
-
 use crate::cmd::Range;
 use crate::Res;
 use rayon::prelude::*;
@@ -12,6 +11,40 @@ pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
 
+#[derive(Debug)]
+pub enum JsonVal<'a> {
+    Ref(&'a Json),
+    Val(Json),
+    Slice(&'a [Json])
+}
+
+impl From<JsonVal<'_>> for Json {
+    fn from(val: JsonVal<'_>) -> Json { 
+        match val {
+            JsonVal::Val(val) => val,
+            JsonVal::Ref(val) => val.clone(),
+        }
+    }
+}
+
+impl From<&JsonVal<'_>> for Json {
+    fn from(val: &JsonVal<'_>) -> Json { 
+        match val {
+            JsonVal::Val(val) => val.clone(),
+            JsonVal::Ref(val) => *val.clone(),
+        }
+    }
+}
+
+
+impl AsRef<Json> for JsonVal<'_> {
+    fn as_ref(&self) -> &Json {
+        match self {
+            JsonVal::Ref(v) => v,
+            JsonVal::Val(v) => v,
+        }
+    }
+}
 // wrapper around json_count to return as a Result
 pub fn count(val: &Json) -> Result<Json, Error> {
     Ok(json_count(val))
@@ -148,7 +181,7 @@ fn or_arr(x: &[Json], y: bool) -> Res {
 }
 
 /// or gate between two json values. Returns back a json value of a boolean.
-pub fn json_or(x: &Json, y: &Json) -> Res {
+pub fn json_or(x: &Json, y: &Json) -> Result<Json, Error> {
     match (x, y) {
         (Json::Bool(x), Json::Bool(y)) => Ok(Json::from(*x || *y)),
         (Json::Bool(val), Json::Array(vec)) | (Json::Array(vec), Json::Bool(val)) => {
@@ -162,7 +195,7 @@ pub fn json_or(x: &Json, y: &Json) -> Res {
 }
 
 /// and gate between two json values. Returns back a json value of a boolean.
-pub fn json_and(x: &Json, y: &Json) -> Res {
+pub fn json_and(x: &Json, y: &Json) -> Result<Json, Error> {
     match (x, y) {
         (Json::Bool(x), Json::Bool(y)) => Ok(Json::from(*x && *y)),
         (x, y) => Err(Error::BadArg(json!([x.clone(), y.clone()]))),
@@ -271,9 +304,9 @@ pub fn json_append(val: &mut Json, elem: Json) {
 
 /// retrieves the first element in the json value.
 //TODO refactor arg from ref to val
-pub fn json_first(val: &Json) -> Json {
+pub fn json_first<'a>(val: &'a Json) -> Option<JsonVal<'a>> {
     match val {
-        Json::Array(ref arr) if !arr.is_empty() => arr[0].clone(),
+        Json::Array(ref arr) => if !arr.is_empty() { Some(JsonVal::Ref(&arr[0])) } else { None }
         Json::String(s) => {
             let mut it = s.chars();
             match it.next() {
@@ -828,7 +861,7 @@ fn map(f: &str) -> Option<fn(&Json) -> Res> {
     match f {
         "avg" => Some(json_avg),
         "dev" => Some(json_dev),
-        "first" => Some(|x| Ok(json_first(x))),
+        "first" => Some(|x| Ok(json_first(x).unwrap_or(JsonVal::Val(Json::None)))),
         "flat" => Some(|x| Ok(json_flat(x.clone()))), //TODO remove clone
         "json" => Some(|x| Ok(x.clone())),
         "last" => Some(|x| Ok(json_last(x))),
@@ -896,7 +929,7 @@ fn json_arr_merge(val: &Json, out: &mut Vec<Json>) {
     };
 }
 
-pub fn json_flat(val: Json) -> Json {
+pub fn json_flat(val: &Json) -> Json {
     match val {
         Json::Array(arr) => {
             let mut out = Vec::new();
@@ -947,6 +980,8 @@ pub fn json_numsort(val: Json, descend: bool) -> Json {
 }
 
 pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
+    unimplemented!()
+    /*
     let f = map(&f).ok_or(Error::BadCmd)?;
     match val {
         Json::Array(arr) => {
@@ -958,27 +993,27 @@ pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
         }
         val => f(&val),
     }
+    */
 }
 
-fn arr_slice(arr: Vec<Json>, start: Option<usize>, end: Option<usize>) -> Result<Json, Error> {
+fn arr_slice(arr: &[Json], start: Option<usize>, end: Option<usize>) -> Result<&[Json], Error> {
     let s = match (start, end) {
         (Some(s), Some(e)) => {
-            if e > arr.len() || s < arr.len() {
-                return Err(Error::IndexOutOfBounds);
-            } else {
-                arr[s..e].to_vec()
-            }
+            unimplemented!()
         }
-        (Some(s), None) => arr[s..].to_vec(),
-        (None, Some(e)) => arr[..e].to_vec(),
-        (None, None) => arr,
+        (Some(s), None) => unimplemented!(),
+        (None, Some(e)) => unimplemented!(),
+        (None, None) => unimplemented!(),
     };
-    Ok(Json::Array(s))
+    //Ok(Json::Array(s))
 }
 
-pub fn json_slice(val: Json, range: Range) -> Res {
+pub fn json_slice<'a>(val: &'a Json, range: Range) -> Res<'a> {
     match val {
-        Json::Array(vec) => arr_slice(vec, range.start, range.size),
+        Json::Array(ref vec) => {
+            let s = arr_slice(vec, range.start, range.size)?;
+            Ok(JsonVal::Slice())
+        }
         _ => Err(Error::ExpectedArr),
     }
 }
