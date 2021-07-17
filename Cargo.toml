@@ -5,11 +5,9 @@ authors = ["jaupe <jaupe@protonmail.com>"]
 edition = "2018"
 
 [dependencies]
-actix = "*"
-actix-web = "*"
-actix-rt = "*"
 bincode = "*"
 rayon = "*"
+rocket = "0.5.0-rc.1"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
 sled = "*"

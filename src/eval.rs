@@ -1,10 +1,10 @@
-use crate::apply::apply;
 use crate::cmd::{Cmd, QueryCmd};
 use crate::db::Query;
 use crate::inmem::InMemDb;
 use crate::json::*;
 use crate::Error;
 use crate::Res;
+use crate::apply::*;
 use core::option::Option::Some;
 use std::str::Split;
 
@@ -75,9 +75,10 @@ fn eval_map<'a>(db: &'a mut InMemDb, arg: Cmd, key: String) -> Res<'a> {
     json_map(val.as_ref(), key).map(JsonVal::Val)
 }
 
-fn eval_flat<'a>(db: &'a mut InMemDb, arg: Cmd) -> Res<'a> {
-    let val = eval_cmd(db, arg)?.into();
-    Ok(JsonVal::Val(json_flat(val.as_ref())))
+fn eval_flat<'a>(db: &'a mut InMemDb, arg: Cmd) -> Result<JsonVal<'a>, Error> {
+    let val = eval_cmd(db, arg)?;
+    let val: Json = json_flat(val.as_ref());
+    Ok(JsonVal::Val(val))
 }
 
 fn eval_numsort<'a>(db: &'a mut InMemDb, arg: Cmd, descend: bool) -> Res<'a> {
@@ -90,10 +91,10 @@ fn eval_median<'a>(db: &'a mut InMemDb, arg: Cmd) -> Res<'a> {
     json_median(val.as_ref()).map(JsonVal::Val)
 }
 
-fn eval_sortby(db: &mut InMemDb, arg: Cmd, key: String) -> Res {
-    let mut val = eval_cmd(db, arg)?.into();
+fn eval_sortby<'a>(db: &'a mut InMemDb, arg: Cmd, key: String) -> Result<JsonVal<'a>, Error> {
+    let mut val: Json = eval_cmd(db, arg)?.into();
     json_sortby(&mut val, &key);
-    Ok(val)
+    Ok(JsonVal::Val(val))
 }
 
 fn eval_eq<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
@@ -122,19 +123,30 @@ fn eval_gt<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
 }
 
 fn eval_lte<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    Ok(json_lte(&eval_cmd(db, lhs)?.as_ref(), &eval_cmd(db, rhs)?.as_ref()))
+    let x = eval_cmd(db, lhs)?;
+    let y = eval_cmd(db, rhs)?;
+    let val = json_lte(x.as_ref(), y.as_ref());
+    Ok(JsonVal::Val(val))
 }
 
 fn eval_gte<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    Ok(json_gte(&eval_cmd(db, lhs)?.as_ref(), &eval_cmd(db, rhs)?.as_ref()))
+    let x: JsonVal<'a> = eval_cmd(db, lhs)?;
+    let y: JsonVal<'a> = eval_cmd(db, rhs)?;
+    let val: Json = json_gte(x.as_ref(), y.as_ref());
+    Ok(JsonVal::Val(val))
 }
 
 fn eval_and(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res {
-    Ok(json_lte(&eval_cmd(db, lhs)?.as_ref(), &eval_cmd(db, rhs)?.as_ref()))
+    let x = eval_cmd(db, lhs)?;
+    let y = eval_cmd(db, rhs)?;
+    let val = json_lte(x.as_ref(), y.as_ref());
+    Ok(JsonVal::Val(val))
 }
 
 fn eval_or(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res {
-    Ok(json_gte(&eval_cmd(db, lhs)?.as_ref(), &eval_cmd(db, rhs)?.as_ref()))
+    let (x, y) = (eval_cmd(db, lhs)?, eval_cmd(db, rhs)?);
+    let val = json_gte(x.as_ref(), y.as_ref());
+    Ok(JsonVal::Val(val))
 }
 
 /// evaluate a command
@@ -145,17 +157,17 @@ pub fn eval_cmd<'a>(db: &'a mut InMemDb, cmd: Cmd) -> Result<JsonVal<'a>, Error>
             apply(*lhs, val.as_ref()).map(JsonVal::Val)
         }
         Cmd::Add(lhs, rhs) => {
-            eval_bin_fn(db, *lhs, *rhs, json_add).map(JsonVal::Val)
+            eval_bin_fn(db, *lhs, *rhs, |x,y| json_add(x,y ).map(JsonVal::Val))
         }
         Cmd::Append(key, arg) => eval_append(db, &key, *arg).map(JsonVal::Val),
-        Cmd::Avg(arg) => eval_unr_fn(db, *arg, json_avg).map(JsonVal::Val),
-        Cmd::Bar(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, json_bar).map(JsonVal::Val),
-        Cmd::Len(arg) => eval_unr_fn(db, *arg, &count).map(JsonVal::Val),
+        Cmd::Avg(arg) => eval_unr_fn(db, *arg, |x| json_avg(x).map(JsonVal::Val)),
+        Cmd::Bar(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x,y| json_bar(x, y).map(JsonVal::Val)),
+        Cmd::Len(arg) => eval_unr_fn(db, *arg, |x| count(x).map(JsonVal::Val)),
         Cmd::Delete(key) => {
             Ok(JsonVal::Val(db.delete(&key).unwrap_or(Json::Null)))
         },
-        Cmd::Div(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, json_div).map(JsonVal::Val),
-        Cmd::First(arg) => eval_unr_fn(db, *arg, |x| Ok(json_first(x))).ma,
+        Cmd::Div(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x,y| json_div(x,y).map(JsonVal::Val)),
+        Cmd::First(arg) => eval_unr_fn(db, *arg, |x| Ok(json_first(x).unwrap_or(JsonVal::Val(Json::Null)))),
         Cmd::Get(key, arg) => {
             let val = eval_cmd(db, *arg)?;
             Ok(JsonVal::Val(json_get(&key, val.as_ref()).unwrap_or(Json::Null)))
@@ -165,7 +177,7 @@ pub fn eval_cmd<'a>(db: &'a mut InMemDb, cmd: Cmd) -> Result<JsonVal<'a>, Error>
         Cmd::Keys(page) => Ok(JsonVal::Val(Json::Array(db.keys(page)))),
         Cmd::Last(arg) => eval_unr_fn(db, *arg, |x| Ok(json_last(x))),
         Cmd::Max(arg) => eval_max(db, arg),
-        Cmd::In(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x, y| Ok(json_in(x, y))),
+        Cmd::In(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x, y| Ok(JsonVal::Val(json_in(x, y)))),
         Cmd::Min(arg) => {
             let val = eval_cmd(db, *arg)?;
             let min_val = json_min(val.as_ref());
@@ -176,13 +188,13 @@ pub fn eval_cmd<'a>(db: &'a mut InMemDb, cmd: Cmd) -> Result<JsonVal<'a>, Error>
             };
             Ok(val)
         }
-        Cmd::Mul(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, json_mul),
+        Cmd::Mul(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x, y|json_mul(x, y).map(JsonVal::Val)),
         Cmd::Push(key, arg) => eval_push(db, &key, *arg),
         Cmd::Pop(key) => {
             let val = pop(db, key)?;
             Ok(JsonVal::Val(val.unwrap_or(Json::Null)))
         }
-        Cmd::Query(cmd) => eval_query(db, cmd),
+        Cmd::Query(cmd) => eval_query(db, cmd).map(JsonVal::Val),
         Cmd::Set(key, arg) => {
             let val: JsonVal = eval_cmd(db, *arg)?;
             let rval = db.set(key, val.into());
@@ -192,21 +204,21 @@ pub fn eval_cmd<'a>(db: &'a mut InMemDb, cmd: Cmd) -> Result<JsonVal<'a>, Error>
         Cmd::Slice(arg, range) => {
             let val = eval_cmd(db, *arg)?;
             unimplemented!()
-            //json_slice(val.into(), range).map(JsonVal::Val)
+            //json_slice(val.into(), range)
         }
         Cmd::Sort(arg, _) => eval_sort_cmd(db, *arg),
-        Cmd::Dev(arg) => eval_unr_fn(db, *arg, json_dev),
-        Cmd::Sub(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, json_sub),
-        Cmd::Sum(arg) => eval_unr_fn(db, *arg, |x| Ok(json_sum(x))),
+        Cmd::Dev(arg) => eval_unr_fn(db, *arg, |x| json_dev(x).map(JsonVal::Val)),
+        Cmd::Sub(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x,y| json_sub(x,y).map(JsonVal::Val)),
+        Cmd::Sum(arg) => eval_unr_fn(db, *arg, |x| Ok(JsonVal::Val(json_sum(x)))),
         Cmd::Summary => Ok(JsonVal::Val(db.summary())),
-        Cmd::Unique(arg) => eval_unr_fn(db, *arg, unique),
-        Cmd::Var(arg) => eval_unr_fn(db, *arg, json_var),
+        Cmd::Unique(arg) => eval_unr_fn(db, *arg, |x| unique(x).map(JsonVal::Val)),
+        Cmd::Var(arg) => eval_unr_fn(db, *arg, |x| json_var(x).map(JsonVal::Val)),
         Cmd::ToString(arg) => Ok(eval_cmd(db, *arg)?),
         Cmd::Key(key) => eval_key(db, key),
         Cmd::Reverse(arg) => eval_reverse(db, *arg),
         Cmd::Median(arg) => eval_median(db, *arg),
         Cmd::SortBy(arg, key) => eval_sortby(db, *arg, key),
-        Cmd::Eval(cmds) => eval_evals(db, cmds),
+        Cmd::Eval(cmds) => unimplemented!(), //eval_evals(db, cmds),
         Cmd::Eq(lhs, rhs) => eval_eq(db, *lhs, *rhs),
         Cmd::NotEq(lhs, rhs) => eval_not_eq(db, *lhs, *rhs),
         Cmd::Gt(lhs, rhs) => eval_gt(db, *lhs, *rhs),
@@ -234,7 +246,7 @@ fn eval_max(db: &mut InMemDb, arg: Box<Cmd>) -> Result<JsonVal, Error> {
 }
 
 // evaluate the query command
-fn eval_query(db: &InMemDb, cmd: QueryCmd) -> Res {
+fn eval_query(db: &InMemDb, cmd: QueryCmd) -> Result<Json, Error> {
     let qry = Query::from(db, cmd);
     qry.exec()
 }
@@ -246,9 +258,9 @@ pub fn pop(db: &mut InMemDb, key: String) -> Result<Option<Json>, Error> {
 }
 
 // evaluate binary function (a fn with 2 args)
-fn eval_bin_fn<'a, F>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd, f: F) -> Res
+fn eval_bin_fn<'a, F>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd, f: F) -> Result<JsonVal<'a>, Error>
 where
-    F: Fn(&'a Json, &'a Json) -> Res<'a>,
+    F: Fn(&'a Json, &'a Json) -> Result<JsonVal<'a>, Error>,
 {
     let x = eval_cmd(db, lhs)?;
     let y = eval_cmd(db, rhs)?;
@@ -256,9 +268,9 @@ where
 }
 
 /// evaluate unary function (a fn with 1 arg)
-fn eval_unr_fn<F>(db: &mut InMemDb, arg: Cmd, f: F) -> Res
+fn eval_unr_fn<'a, F>(db: &'a mut InMemDb, arg: Cmd, f: F) -> Res<'a>
 where
-    F: Fn(&Json) -> Res,
+    F: Fn(&'a Json) -> Res<'a>,
 {
     let val = eval_cmd(db, arg)?;
     f(val.as_ref())
@@ -316,7 +328,7 @@ mod tests {
             {"qty": 5},
         ]});
         let it = "orders.qty".split('.');
-        assert_eq!(Some(json!([1,2,3,4,5])), eval_nested_key(Some(val), it));
+        assert_eq!(Some(json!([1,2,3,4,5])), eval_nested_key(Some(&val), it));
 
         let val = json!({"orders": [
             {"customer": {"name": "alice"}},

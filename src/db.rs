@@ -1,4 +1,3 @@
-use crate::apply::apply_rows;
 use crate::cmd::{Cmd, QueryCmd};
 use crate::err::Error;
 use crate::eval::*;
