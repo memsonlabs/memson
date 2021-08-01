@@ -1,294 +1,210 @@
+use std::sync::Arc;
 use crate::cmd::{Cmd, QueryCmd};
 use crate::db::Query;
 use crate::inmem::InMemDb;
 use crate::json::*;
 use crate::Error;
-use crate::Res;
-use crate::apply::*;
 use core::option::Option::Some;
 use std::str::Split;
 
 
-
-fn eval_nested_key<'a>(val: Option<&'a Json>, it: Split<'_, char>) -> Option<&'a Json> {
+pub fn eval_nested_key<'a>(val: Option<&'a Json>, it: Split<'_, char>) -> Option<&'a Json> {
     unimplemented!()
 }
 
 /// evaluate the key command
-fn eval_key<'a>(db: &'a InMemDb, key: String) -> Res<'a> {
+pub fn eval_key<'a>(db: &mut InMemDb, key: String) -> Result<Arc<Json>, Error> {
     let mut it = key.split('.');
     let key = it.next().ok_or_else(|| Error::BadKey(key.clone()))?;
     let ref_val = db.key(key).ok_or_else(|| Error::BadKey(key.to_string()))?;
     let val = eval_nested_key(Some(&ref_val), it);
-    let r = if let Some(val) = val {
-        JsonVal::Ref(val)
+    let r: Json = if let Some(val) = val {
+        val.clone()
     } else {
-        JsonVal::Val(Json::Null)
+        Json::Null
     };
-    Ok(r)
+    Ok(Arc::new(r))
 }
 
-fn eval_append<'a>(db: &'a mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
-    let elem = eval_cmd(db, arg)?;
+pub fn eval_append<'a>(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Arc<Json>, Error> {
+/*     let elem = db.eval(arg)?;
     let val = db.get_mut(&key)?;
     json_append(val, elem.into());
-    Ok(Json::Null)
+    Ok(Json::Null) */
+    unimplemented!()
 }
 
 /// evaluate the sort command
-fn eval_sort_cmd<'a>(db: &'a mut InMemDb, arg: Cmd) -> Res<'a> {
-    let mut val: Json = eval_cmd(db, arg)?.into();
+pub fn eval_sort_cmd<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Arc<Json>, Error> {
+    let mut val: Json = db.eval(arg)?.as_ref().clone();
     json_sort(&mut val, false);
-    Ok(JsonVal::Val(val))
+    Ok(Arc::new(val))
 }
 
 /// evaluate the insert command
-fn eval_insert<'a>(db: &'a mut InMemDb, key: &str, arg: Vec<JsonObj>) -> Res<'a> {
-    let val = db.get_mut(&key)?;
+pub fn eval_insert<'a>(db: &mut InMemDb, key: &str, arg: Vec<JsonObj>) -> Result<Arc<Json>, Error> {
+ /*    
+ let val = db.get_mut(&key)?;
     let n = arg.len();
     json_insert(val, arg);
-    Ok(JsonVal::Val(Json::from(n)))
+    Ok(Arc::new(Json::from(n))) */
+    unimplemented!()
 }
 
-fn eval_push<'a>(db: &'a mut InMemDb, key: &str, arg: Cmd) -> Res<'a> {
-    let val: Json = eval_cmd(db, arg)?.into();
+pub fn eval_push<'a>(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Arc<Json>, Error> {
+/*     let val: Json = db.eval(arg)?.into();
     let kv = db.get_mut(&key)?;
     json_push(kv, val);
-    Ok(JsonVal::Val(Json::Null))
+    Ok(Arc::new(Json::Null)) */
+    unimplemented!()
 }
 
-fn eval_reverse(db: &mut InMemDb, arg: Cmd) -> Res {
-    let mut val: Json = eval_cmd(db, arg)?.into();
+pub fn eval_reverse<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Arc<Json>, Error> {
+    let mut val: Json = db.eval(arg)?.as_ref().clone();
     json_reverse(&mut val);
-    Ok(JsonVal::Val(val))
+    Ok(Arc::new(val))
 }
 
-fn eval_evals<'a>(db: &'a mut InMemDb, cmds: Vec<Cmd>) -> Result<Vec<JsonVal<'a>>, Error> {
-    let vals: Result<Vec<JsonVal<'a>>, Error> = cmds.into_iter().map(|cmd| {
-        eval_cmd(db, cmd)
-    }).collect();
-    vals
+pub fn eval_map<'a>(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Arc<Json>, Error> {
+    let val = db.eval(arg)?;
+    json_map(val.as_ref(), key).map(Arc::new)
 }
 
-fn eval_map<'a>(db: &'a mut InMemDb, arg: Cmd, key: String) -> Res<'a> {
-    let val = eval_cmd(db, arg)?;
-    json_map(val.as_ref(), key).map(JsonVal::Val)
-}
-
-fn eval_flat<'a>(db: &'a mut InMemDb, arg: Cmd) -> Result<JsonVal<'a>, Error> {
-    let val = eval_cmd(db, arg)?;
+pub fn eval_flat<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Arc<Json>, Error> {
+    let val = db.eval(arg)?;
     let val: Json = json_flat(val.as_ref());
-    Ok(JsonVal::Val(val))
+    Ok(Arc::new(val))
 }
 
-fn eval_numsort<'a>(db: &'a mut InMemDb, arg: Cmd, descend: bool) -> Res<'a> {
-    let val: Json = eval_cmd(db, arg)?.into();
-    Ok(JsonVal::Val(json_numsort(val, descend)))
+pub fn eval_numsort<'a>(db: &mut InMemDb, arg: Cmd, descend: bool) -> Result<Arc<Json>, Error> {
+    let val: Json = db.eval(arg)?.as_ref().clone();
+    Ok(Arc::new(json_numsort(val, descend)))
 }
 
-fn eval_median<'a>(db: &'a mut InMemDb, arg: Cmd) -> Res<'a> {
-    let val = eval_cmd(db, arg)?;
-    json_median(val.as_ref()).map(JsonVal::Val)
+pub fn eval_median<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Arc<Json>, Error> {
+    let val = db.eval(arg)?;
+    json_median(val.as_ref()).map(Arc::new)
 }
 
-fn eval_sortby<'a>(db: &'a mut InMemDb, arg: Cmd, key: String) -> Result<JsonVal<'a>, Error> {
-    let mut val: Json = eval_cmd(db, arg)?.into();
+pub fn eval_sortby<'a>(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Arc<Json>, Error> {
+    let mut val: Json = db.eval(arg)?.as_ref().clone();
     json_sortby(&mut val, &key);
-    Ok(JsonVal::Val(val))
+    Ok(Arc::new(val))
 }
 
-fn eval_eq<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    let lhs = eval_cmd(db, lhs)?;
-    let rhs = eval_cmd(db, rhs)?;
-    Ok(JsonVal::Val(json_eq(lhs.as_ref(), rhs.as_ref())))
+pub fn eval_eq<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let lhs = db.eval(lhs)?;
+    let rhs = db.eval(rhs)?;
+    Ok(Arc::new(json_eq(lhs.as_ref(), rhs.as_ref())))
 }
 
-fn eval_not_eq<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    let x = eval_cmd(db, lhs)?;
-    let y = eval_cmd(db, rhs)?;
-    Ok(JsonVal::Val(json_not_eq(x.as_ref(), y.as_ref())))
+pub fn eval_not_eq<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    Ok(Arc::new(json_not_eq(x.as_ref(), y.as_ref())))
 }
 
-fn eval_lt<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    let x = eval_cmd(db, lhs)?;
-    let y = eval_cmd(db, rhs)?;
-    Ok(JsonVal::Val(json_lt(x.as_ref(), y.as_ref())))
+pub fn eval_lt<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    Ok(Arc::new(json_lt(x.as_ref(), y.as_ref())))
 }
 
 
-fn eval_gt<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    let x = eval_cmd(db, lhs)?;
-    let y = eval_cmd(db, rhs)?;
-    Ok(JsonVal::Val(json_gt(x.as_ref(), y.as_ref())))
+pub fn eval_gt<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    Ok(Arc::new(json_gt(x.as_ref(), y.as_ref())))
 }
 
-fn eval_lte<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    let x = eval_cmd(db, lhs)?;
-    let y = eval_cmd(db, rhs)?;
+pub fn eval_lte<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
     let val = json_lte(x.as_ref(), y.as_ref());
-    Ok(JsonVal::Val(val))
+    Ok(Arc::new(val))
 }
 
-fn eval_gte<'a>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res<'a> {
-    let x: JsonVal<'a> = eval_cmd(db, lhs)?;
-    let y: JsonVal<'a> = eval_cmd(db, rhs)?;
-    let val: Json = json_gte(x.as_ref(), y.as_ref());
-    Ok(JsonVal::Val(val))
+pub fn eval_gte<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    let val: Json = json_gte(&x, &y);
+    Ok(Arc::new(val))
 }
 
-fn eval_and(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res {
-    let x = eval_cmd(db, lhs)?;
-    let y = eval_cmd(db, rhs)?;
+pub fn eval_and<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
     let val = json_lte(x.as_ref(), y.as_ref());
-    Ok(JsonVal::Val(val))
+    Ok(Arc::new(val))
 }
 
-fn eval_or(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Res {
-    let (x, y) = (eval_cmd(db, lhs)?, eval_cmd(db, rhs)?);
+pub fn eval_or<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
     let val = json_gte(x.as_ref(), y.as_ref());
-    Ok(JsonVal::Val(val))
+    Ok(Arc::new(val))
 }
 
-/// evaluate a command
-pub fn eval_cmd<'a>(db: &'a mut InMemDb, cmd: Cmd) -> Result<JsonVal<'a>, Error> {
-    match cmd {
-        Cmd::Apply(lhs, rhs) => {
-            let val = eval_cmd(db, *rhs)?;
-            apply(*lhs, val.as_ref()).map(JsonVal::Val)
-        }
-        Cmd::Add(lhs, rhs) => {
-            eval_bin_fn(db, *lhs, *rhs, |x,y| json_add(x,y ).map(JsonVal::Val))
-        }
-        Cmd::Append(key, arg) => eval_append(db, &key, *arg).map(JsonVal::Val),
-        Cmd::Avg(arg) => eval_unr_fn(db, *arg, |x| json_avg(x).map(JsonVal::Val)),
-        Cmd::Bar(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x,y| json_bar(x, y).map(JsonVal::Val)),
-        Cmd::Len(arg) => eval_unr_fn(db, *arg, |x| count(x).map(JsonVal::Val)),
-        Cmd::Delete(key) => {
-            Ok(JsonVal::Val(db.delete(&key).unwrap_or(Json::Null)))
-        },
-        Cmd::Div(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x,y| json_div(x,y).map(JsonVal::Val)),
-        Cmd::First(arg) => eval_unr_fn(db, *arg, |x| Ok(json_first(x).unwrap_or(JsonVal::Val(Json::Null)))),
-        Cmd::Get(key, arg) => {
-            let val = eval_cmd(db, *arg)?;
-            Ok(JsonVal::Val(json_get(&key, val.as_ref()).unwrap_or(Json::Null)))
-        }
-        Cmd::Insert(key, arg) => eval_insert(db, &key, arg),
-        Cmd::Json(val) => Ok(JsonVal::Val(val)),
-        Cmd::Keys(page) => Ok(JsonVal::Val(Json::Array(db.keys(page)))),
-        Cmd::Last(arg) => eval_unr_fn(db, *arg, |x| Ok(json_last(x))),
-        Cmd::Max(arg) => eval_max(db, arg),
-        Cmd::In(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x, y| Ok(JsonVal::Val(json_in(x, y)))),
-        Cmd::Min(arg) => {
-            let val = eval_cmd(db, *arg)?;
-            let min_val = json_min(val.as_ref());
-            let val = if let Some(val) = min_val {
-                JsonVal::Ref(val)
-            } else {
-                JsonVal::Val(Json::Null)
-            };
-            Ok(val)
-        }
-        Cmd::Mul(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x, y|json_mul(x, y).map(JsonVal::Val)),
-        Cmd::Push(key, arg) => eval_push(db, &key, *arg),
-        Cmd::Pop(key) => {
-            let val = pop(db, key)?;
-            Ok(JsonVal::Val(val.unwrap_or(Json::Null)))
-        }
-        Cmd::Query(cmd) => eval_query(db, cmd).map(JsonVal::Val),
-        Cmd::Set(key, arg) => {
-            let val: JsonVal = eval_cmd(db, *arg)?;
-            let rval = db.set(key, val.into());
-            let val: Json = rval.unwrap_or(Json::Null);
-            Ok(JsonVal::Val(val))
-        }
-        Cmd::Slice(arg, range) => {
-            let val = eval_cmd(db, *arg)?;
-            unimplemented!()
-            //json_slice(val.into(), range)
-        }
-        Cmd::Sort(arg, _) => eval_sort_cmd(db, *arg),
-        Cmd::Dev(arg) => eval_unr_fn(db, *arg, |x| json_dev(x).map(JsonVal::Val)),
-        Cmd::Sub(lhs, rhs) => eval_bin_fn(db, *lhs, *rhs, |x,y| json_sub(x,y).map(JsonVal::Val)),
-        Cmd::Sum(arg) => eval_unr_fn(db, *arg, |x| Ok(JsonVal::Val(json_sum(x)))),
-        Cmd::Summary => Ok(JsonVal::Val(db.summary())),
-        Cmd::Unique(arg) => eval_unr_fn(db, *arg, |x| unique(x).map(JsonVal::Val)),
-        Cmd::Var(arg) => eval_unr_fn(db, *arg, |x| json_var(x).map(JsonVal::Val)),
-        Cmd::ToString(arg) => Ok(eval_cmd(db, *arg)?),
-        Cmd::Key(key) => eval_key(db, key),
-        Cmd::Reverse(arg) => eval_reverse(db, *arg),
-        Cmd::Median(arg) => eval_median(db, *arg),
-        Cmd::SortBy(arg, key) => eval_sortby(db, *arg, key),
-        Cmd::Eval(cmds) => unimplemented!(), //eval_evals(db, cmds),
-        Cmd::Eq(lhs, rhs) => eval_eq(db, *lhs, *rhs),
-        Cmd::NotEq(lhs, rhs) => eval_not_eq(db, *lhs, *rhs),
-        Cmd::Gt(lhs, rhs) => eval_gt(db, *lhs, *rhs),
-        Cmd::Lt(lhs, rhs) => eval_lt(db, *lhs, *rhs),
-        Cmd::Gte(lhs, rhs) => eval_gte(db, *lhs, *rhs),
-        Cmd::Lte(lhs, rhs) => eval_lte(db, *lhs, *rhs),
-        Cmd::And(lhs, rhs) => eval_and(db, *lhs, *rhs),
-        Cmd::Or(lhs, rhs) => eval_or(db, *lhs, *rhs),
-        Cmd::Map(arg, f) => eval_map(db, *arg, f),
-        Cmd::Flat(arg) => eval_flat(db, *arg),
-        Cmd::NumSort(arg, descend) => eval_numsort(db, *arg, descend),
-        Cmd::Has(key) => Ok(JsonVal::Val(Json::Bool(db.has(&key)))),
-    }
-}
-
-fn eval_max(db: &mut InMemDb, arg: Box<Cmd>) -> Result<JsonVal, Error> {
-    let val = eval_cmd(db, *arg)?;
+pub fn eval_max(db: &mut InMemDb, arg: Box<Cmd>) -> Result<Arc<Json>, Error> {
+    let val = db.eval(*arg)?;
     let max_val = json_max(val.as_ref());
-    let val: JsonVal = if let Some(val) = max_val {
-        JsonVal::Ref(val)
+    let val: Json = if let Some(val) = max_val {
+        val.clone()
     } else {
-        JsonVal::Val(Json::Null)
+        Json::Null
     };
-    Ok(val)
+    Ok(Arc::new(val))
+}
+
+pub fn eval_min<'a>(db: &'a mut InMemDb, arg: Cmd) -> Result<Arc<Json>, Error> {
+    let val = db.eval(arg)?;
+    let min_val = json_min(val.as_ref());
+    let val = if let Some(val) = min_val {
+        val.clone()
+    } else {
+        Json::Null
+    };
+    Ok(Arc::new(val))
 }
 
 // evaluate the query command
-fn eval_query(db: &InMemDb, cmd: QueryCmd) -> Result<Json, Error> {
+pub fn eval_query(db: &InMemDb, cmd: QueryCmd) -> Result<Json, Error> {
     let qry = Query::from(db, cmd);
     qry.exec()
 }
 
 // evaluation of the pop command
-pub fn pop(db: &mut InMemDb, key: String) -> Result<Option<Json>, Error> {
-    let val = db.get_mut(&key)?;
-    json_pop(val)
+pub fn pop(db: &InMemDb, key: String) -> Result<Option<Json>, Error> {
+    unimplemented!()
 }
 
 // evaluate binary function (a fn with 2 args)
-fn eval_bin_fn<'a, F>(db: &'a mut InMemDb, lhs: Cmd, rhs: Cmd, f: F) -> Result<JsonVal<'a>, Error>
-where
-    F: Fn(&'a Json, &'a Json) -> Result<JsonVal<'a>, Error>,
-{
-    let x = eval_cmd(db, lhs)?;
-    let y = eval_cmd(db, rhs)?;
+pub fn eval_bin_fn(db: &mut InMemDb, lhs: Cmd, rhs: Cmd, f: &dyn Fn(&Json, &Json) -> Result<Arc<Json>, Error> ) -> Result<Arc<Json>, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
     f(x.as_ref(), y.as_ref())
 }
 
 /// evaluate unary function (a fn with 1 arg)
-fn eval_unr_fn<'a, F>(db: &'a mut InMemDb, arg: Cmd, f: F) -> Res<'a>
-where
-    F: Fn(&'a Json) -> Res<'a>,
-{
-    let val = eval_cmd(db, arg)?;
-    f(val.as_ref())
-}
+
 
 /// evaluate filter to filter out data
 pub fn eval_filter(cmd: Cmd, val: &Json) -> Option<bool> {
+    /*
     let r = apply(cmd, val).ok();
     if let Some(g) = r {
         g.as_bool()
     } else {
         None
     }
+    */
+    unimplemented!()
 }
 
 //TODO refactor to take Json val instead of rows to make more generic
 pub fn eval_rows_cmd(cmd: Cmd, rows: &Json) -> Option<Json> {
-    apply(cmd, rows).ok()
+    //apply(cmd, rows).ok()
+    unimplemented!()
 }
 
 #[cfg(test)]
@@ -298,16 +214,16 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn eval_in() {
+    pub fn eval_in() {
         let mut db = InMemDb::new();
-        db.set("nums".to_string(), json!([1, 2, 3, 4, 5]));
+        db.set("nums".to_string(), Arc::new(json!([1, 2, 3, 4, 5])));
         let cmd = Cmd::In(
             Box::new(Cmd::Key("nums".to_string())),
             Box::new(Cmd::Json(json!(3))),
         );
         assert_eq!(
-            Ok(json!([false, false, true, false, false])),
-            eval_cmd(&mut db, cmd)
+            Ok(Arc::new(json!([false, false, true, false, false]))),
+            db.eval(cmd)
         );
     }
 
@@ -318,7 +234,7 @@ mod tests {
 
         let val = json!({"orders": [1,2,3,4,5]});
         let it = "orders".split('.');
-        assert_eq!(Some(json!([1,2,3,4,5])), eval_nested_key(Some(val), it));
+        assert_eq!(Some(&json!([1,2,3,4,5])), eval_nested_key(Some(&val), it));
 
         let val = json!({"orders": [
             {"qty": 1},
@@ -328,7 +244,7 @@ mod tests {
             {"qty": 5},
         ]});
         let it = "orders.qty".split('.');
-        assert_eq!(Some(json!([1,2,3,4,5])), eval_nested_key(Some(&val), it));
+        assert_eq!(Some(&json!([1,2,3,4,5])), eval_nested_key(Some(&val), it));
 
         let val = json!({"orders": [
             {"customer": {"name": "alice"}},
@@ -340,6 +256,6 @@ mod tests {
             {"foo": {"bar": "baz"}},
         ]});
         let it = "orders.customer.name".split('.');
-        assert_eq!(Some(json!(["alice", "bob", "charles", "dave", "ewa", Json::Null, Json::Null])), eval_nested_key(Some(val), it));
+        assert_eq!(Some(&json!(["alice", "bob", "charles", "dave", "ewa", Json::Null, Json::Null])), eval_nested_key(Some(&val), it));
     }
 }

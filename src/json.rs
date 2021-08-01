@@ -1,7 +1,7 @@
+use std::sync::Arc;
 use serde::Serialize;
 use crate::err::Error;
 use crate::cmd::Range;
-use crate::Res;
 use rayon::prelude::*;
 use serde_json::Number;
 pub use serde_json::{json, Map};
@@ -11,20 +11,31 @@ use std::mem;
 pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
-
-#[derive(Debug, Serialize)]
-pub enum JsonVal<'a> {
-    Ref(&'a Json),
+/* 
+#[derive(Debug, Serialize, Eq, PartialEq)]
+pub enum JsonVal {
+    Box(Arc<Json>),
     Val(Json),
-    Slice(&'a [Json])
 }
 
 impl <'a> JsonVal<'a> {
+    pub fn val<J:Into<Json>>(val: J) -> JsonVal<'a> {
+        Arc::new(val.into())
+    }
+
     fn as_bool(&self) -> Option<bool> {
         match self {
-            JsonVal::Val(Json::Bool(val)) => Some(*val),
+            Arc::new(Json::Bool(val)) => Some(*val),
             JsonVal::Ref(Json::Bool(val)) => Some(*val),
             _ => None,
+        }
+    }
+
+    pub fn reff(&'a self) -> &'a Json {
+        match self {
+            Arc::new(ref val) => val,
+            JsonVal::Ref(val) => *val,
+            _ => unimplemented!(),            
         }
     }
 }
@@ -32,7 +43,7 @@ impl <'a> JsonVal<'a> {
 impl From<JsonVal<'_>> for Json {
     fn from(val: JsonVal<'_>) -> Json { 
         match val {
-            JsonVal::Val(val) => val,
+            Arc::new(val) => val,
             JsonVal::Ref(val) => val.clone(),
         }
     }
@@ -41,8 +52,9 @@ impl From<JsonVal<'_>> for Json {
 impl From<&JsonVal<'_>> for Json {
     fn from(val: &JsonVal<'_>) -> Json { 
         match val {
-            JsonVal::Val(val) => val.clone(),
-            JsonVal::Ref(val) => *val.clone(),
+            Arc::new(val) => val.clone(),
+            JsonVal::Ref(val) => (*val).clone(),
+            JsonVal::Slice(s) => Json::from(s.to_owned()),
         }
     }
 }
@@ -52,7 +64,7 @@ impl AsRef<Json> for JsonVal<'_> {
     fn as_ref(&self) -> &Json {
         match self {
             JsonVal::Ref(v) => v,
-            JsonVal::Val(v) => v,
+            Arc::new(v) => v,
         }
     }    
 }
@@ -60,11 +72,12 @@ impl AsRef<Json> for JsonVal<'_> {
 impl AsMut<Json> for JsonVal<'_> {
     fn as_mut(&mut self) -> &mut Json {
         match self {
-            JsonVal::Ref(v) => v,
-            JsonVal::Val(v) => v,
+            JsonVal::Ref(_) => unimplemented!(),
+            Arc::new(v) => v,
+            JsonVal::Slice(_) => unimplemented!(),
         }
     }    
-}
+} */
 
 // wrapper around json_count to return as a Result
 pub fn count(val: &Json) -> Result<Json, Error> {
@@ -325,37 +338,38 @@ pub fn json_append(val: &mut Json, elem: Json) {
 
 /// retrieves the first element in the json value.
 //TODO refactor arg from ref to val
-pub fn json_first<'a>(val: &'a Json) -> Option<JsonVal<'a>> {
+pub fn json_first<'a>(val: &'a Json) -> Option<&Json> {
+    unimplemented!()
+    /*
     match val {
         Json::Array(ref arr) => if !arr.is_empty() { Some(JsonVal::Ref(&arr[0])) } else { None }
         Json::String(s) => {
             let mut it = s.chars();
             match it.next() {
-                Some(c) => Some(JsonVal::Val(Json::from(c.to_string()))),
+                Some(c) => Some(Arc::new(Json::from(c.to_string()))),
                 None => None,
             }
         }
         val => Some(JsonVal::Ref(val))
     }
+    */
 }
 
 /// retrieves the last element in the json value.
-pub fn json_last(val: &Json) -> JsonVal {
+pub fn json_last<'a>(val: &'a Json) -> Option<Arc<Json>> {
+    /*
     match val {
         Json::Array(ref arr) => {
             if arr.is_empty() {
-                return JsonVal::Val(Json::Null)
+                return None;
             }
-            JsonVal::Ref(&arr[arr.len() - 1])
+            let i = arr.len() - 1;
+            Some(&arr[i])
         }
-        Json::String(s) => {
-            let it = s.chars();
-            let last = it.last();
-            let s = last.map(String::from).map(Json::from).unwrap_or(Json::Null);
-            JsonVal::Val(s)
-        }
-        val => JsonVal::Ref(val),
+        val => Some(val),
     }
+    */
+    unimplemented!()
 }
 
 /// sums the json value.
@@ -884,30 +898,24 @@ pub fn json_median(_val: &Json) -> Result<Json, Error> {
     unimplemented!()
 }
 
-fn wrap<'a>(val: Option<&'a Json>) -> JsonVal<'a> {
-    if let Some(val) = val {
-        JsonVal::Ref(val)
-    } else {
-        JsonVal::Val(Json::Null)
-    }
-}
 
-fn map(f: &str) -> Option<fn(&Json) -> Res> {
-    match f {
-        "avg" => Some(|x| json_avg(x).map(JsonVal::Val)),
-        "dev" => Some(|x| json_dev(x).map(JsonVal::Val)),
-        "first" => Some(|x| Ok(json_first(x).unwrap_or(JsonVal::Val(Json::Null)))),
-        "flat" => Some(|x| Ok(JsonVal::Val(json_flat(x)))), //TODO remove clone
+fn map<'a>(f: &str) -> Option<fn(&'a Json) -> Result<Json, Error>> {
+    unimplemented!()
+    /* match f {
+        "avg" => Some(|x| json_avg(x).map(Arc::new)),
+        "dev" => Some(|x| json_dev(x).map(Arc::new)),
+        "first" => Some(|x| Ok(json_first(x).unwrap_or(Arc::new(Json::Null)))),
+        "flat" => Some(|x| Ok(Arc::new(json_flat(x)))), //TODO remove clone
         "json" => Some(|x| Ok(JsonVal::Ref(x))),
         "last" => Some(|x| Ok(json_last(x))),
-        "len" => Some(|x| Ok(JsonVal::Val(json_count(x)))),
+        "len" => Some(|x| Ok(Arc::new(json_count(x)))),
         "max" => Some(|x| Ok(wrap(json_max(x)))),
         "min" => Some(|x| Ok(wrap(json_min(x)))),
-        "sum" => Some(|x| Ok(JsonVal::Val(json_sum(x)))),
-        "unique" => Some(|x| Ok(JsonVal::Val(json_unique(x)))),
-        "var" => Some(|x| json_var(x).map(JsonVal::Val)),
+        "sum" => Some(|x| Ok(Arc::new(json_sum(x)))),
+        "unique" => Some(|x| Ok(Arc::new(json_unique(x)))),
+        "var" => Some(|x| json_var(x).map(Arc::new)),
         _ => None,
-    }
+    } */
 }
 
 pub fn json_has(val: &Json, key: &str) -> Json {
@@ -1043,11 +1051,11 @@ fn arr_slice(arr: &[Json], start: Option<usize>, end: Option<usize>) -> Result<&
     //Ok(Json::Array(s))
 }
 
-pub fn json_slice<'a>(val: &'a Json, range: Range) -> Result<JsonVal<'a>, Error> {
+pub fn json_slice(val: &Json, range: Range) -> Result<Arc<Json>, Error> {
     match val {
         Json::Array(ref vec) => {
             let s = arr_slice(vec, range.start, range.size)?;
-            Ok(JsonVal::Slice(s))
+            Ok(Arc::new(Json::from(s.to_owned())))
         }
         _ => Err(Error::ExpectedArr),
     }

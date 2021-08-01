@@ -1,7 +1,7 @@
 use crate::cmd::{Cmd, Range};
 use crate::db::PAGE_SIZE;
 use crate::json::*;
-use crate::{Error, Res};
+use crate::Error;
 use rayon::prelude::*;
 
 /// retrieves the key/val entry from a row by key
@@ -10,32 +10,32 @@ fn get_key(row: &Json, key: &str) -> Json {
 }
 
 /// apply an unary function
-fn apply_unr_fn<F>(arg: Cmd, rows: &[Json], f: F) -> Res
+fn apply_unr_fn<F>(arg: Cmd, rows: &[Json], f: F) -> Result<Json, Error>
 where
-    F: FnOnce(&Json) -> Res,
+    F: FnOnce(&Json) -> Result<Json, Error>,
 {
     let val = apply_rows(arg, rows)?;
-    f(val.as_ref())
+    f(&val)
 }
 
 /// apply a binary function
-fn apply_bin_fn<'a, F>(lhs: Cmd, rhs: Cmd, rows: &[Json], f: F) -> Res
+fn apply_bin_fn<F>(lhs: Cmd, rhs: Cmd, rows: &[Json], f: F) -> Result<Json, Error>
 where
-    F: FnOnce(&'a Json, &'a Json) -> Res<'a>,
+    F: FnOnce(&Json, &Json) -> Result<Json, Error>,
 {
     let x = apply_rows(lhs, rows)?;
     let y = apply_rows(rhs, rows)?;
-    f(x.as_ref(), y.as_ref())
+    f(&x, &y)
 }
 
 /// apply boolean function to process binary gates
-fn apply_bool_fn<F>(lhs: Cmd, rhs: Cmd, rows: &[Json], f: F) -> Res
+fn apply_bool_fn<'a, F>(lhs: Cmd, rhs: Cmd, rows: &'a [Json], f: F) -> Result<JsonVal<'a>, Error>
 where
     F: FnOnce(&Json, &Json) -> bool,
 {
     let x = apply_rows(lhs, rows)?;
     let y = apply_rows(rhs, rows)?;
-    Ok(Json::from(f(x.as_ref(), y.as_ref())))
+    Ok(Arc::new(f(&x, &y)))
 }
 
 fn apply_key(key: String, rows: &[Json]) -> Json {
@@ -62,7 +62,7 @@ fn apply_sum(arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
         }
         cmd => {
             let val = apply_rows(cmd, rows)?;
-            Ok(json_sum(val.as_ref()))
+            Ok(json_sum(&val))
         }
     }
 }
@@ -105,21 +105,25 @@ fn apply_max(arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
     }
 }
 
-fn apply_eval(cmds: Vec<Cmd>, rows: &[Json]) -> Result<Json, Error> {
-    let vals: Result<Vec<Json>, Error> = cmds
+fn apply_eval<'a>(cmds: Vec<Cmd>, rows: &'a [Json]) -> Result<JsonVal<'a>, Error> {
+    /*
+    let vals: Result<Vec<JsonVal<'a>>, Error> = cmds
         .par_iter()
         .map(|cmd| apply_rows(cmd.clone(), rows))
         .collect();
     Ok(Json::Array(vals?))
+    */
+    unimplemented!()
 }
 
 fn apply_get(key: String, arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
-    json_get(&key, &apply_rows(arg, rows)?).ok_or(Error::BadKey(key))
+    let val = apply_rows(arg, rows)?;
+    json_get(&key, &val).ok_or(Error::BadKey(key))
 }
 
 fn apply_median(arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
     let mut val = apply_rows(arg, rows)?;
-    json_median(&mut val)
+    json_median(&val)
 }
 
 fn apply_map(arg: Cmd, f: String, rows: &[Json]) -> Result<Json, Error> {
@@ -129,7 +133,7 @@ fn apply_map(arg: Cmd, f: String, rows: &[Json]) -> Result<Json, Error> {
 
 fn apply_flat(arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
     let val = apply_rows(arg, rows)?;
-    Ok(json_flat(val))
+    Ok(json_flat(&val))
 }
 
 fn apply_has(key: String, rows: &[Json]) -> Result<Json, Error> {
@@ -171,15 +175,15 @@ fn apply_numsort(arg: Cmd, descend: bool, rows: &[Json]) -> Result<Json, Error> 
     Ok(json_numsort(val, descend))
 }
 
-fn apply_slice(arg: Cmd, range: Range, rows: &[Json]) -> Result<Json, Error> {
+fn apply_slice<'a>(arg: Cmd, range: Range, rows: &'a [Json]) -> Result<JsonVal<'a>, Error> {
     let val = apply_rows(arg, rows)?;
-    json_slice(val, range)
+    json_slice(&val, range)
 }
 
 /// apply a cmd to rows of json
 pub fn apply_rows(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
     match cmd {
-        Cmd::Key(key) => Ok(apply_key(key, rows)),
+        Cmd::Key(key) => Ok(Arc::new(apply_key(key, rows))),
         Cmd::Sum(arg) => apply_sum(*arg, rows),
         Cmd::Max(arg) => apply_max(*arg, rows),
         Cmd::Append(_, _) => Err(Error::BadCmd),
@@ -307,7 +311,7 @@ pub fn apply(cmd: Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Div(x, y) => json_div(&apply(*x, val)?, &apply(*y, val)?),
         Cmd::First(arg) => {
             let val: Json = apply(*arg, val)?;
-            let arg: JsonVal = json_first(val.as_ref()).unwrap_or(JsonVal::Val(Json::Null));
+            let arg: JsonVal = json_first(val.as_ref()).unwrap_or(Arc::new(Json::Null));
             Ok(arg.into())
         }
         Cmd::Last(arg) => Ok(json_last(&apply(*arg, val)?)),
