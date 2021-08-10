@@ -397,3 +397,4 @@ fn cmd_parse_map() {
     let exp = Cmd::Map(Box::new(Cmd::Key("k".to_string())), "len".to_string());
     assert_eq!(exp, cmd);
 }
+
