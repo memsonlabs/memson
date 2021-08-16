@@ -34,7 +34,7 @@ impl InMemDb {
         let mut inmem_db = InMemDb::new();
         for kv in on_disk_db.sled.iter() {
             let (key, val) = kv.map_err(|_| Error::BadIO)?;
-            let s = unsafe { String::from_utf8_unchecked(key.as_ref().to_vec()) };
+            let s = String::from_utf8(key.as_ref().to_vec()).unwrap();
             inmem_db.set(s, ivec_to_json(&val)?);
         }
         Ok(inmem_db)
@@ -150,7 +150,10 @@ impl InMemDb {
             Cmd::Unique(arg) => self.eval_unr_fn(*arg, &|x| unique(x).map(Arc::new)),
             Cmd::Var(arg) => self.eval_unr_fn(*arg, &|x| json_var(x).map(Arc::new)),
             Cmd::ToString(arg) => Ok(self.eval(*arg)?),
-            Cmd::Key(key) => eval_key(self, key),
+            Cmd::Key(key) => {
+                let keys: Vec<&str> = key.split(".").collect();
+                eval_key(self, &keys)
+            }
             Cmd::Reverse(arg) => eval_reverse(self, *arg),
             Cmd::Median(arg) => eval_median(self, *arg),
             Cmd::SortBy(arg, key) => eval_sortby(self, *arg, key),

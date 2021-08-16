@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use crate::err::Error;
 
 //pub mod apply;

@@ -55,7 +55,7 @@ pub enum Cmd {
     #[serde(rename = "dev")]
     Dev(Box<Cmd>),
     #[serde(rename = "eval")]
-    Eval(Vec<Cmd>),
+    Eval(Box<Cmd>),
     #[serde(rename = "==")]
     Eq(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "first")]

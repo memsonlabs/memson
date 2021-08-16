@@ -5,19 +5,26 @@ use crate::inmem::InMemDb;
 use crate::json::*;
 use crate::Error;
 use core::option::Option::Some;
-use std::str::Split;
 
 
-pub fn eval_nested_key<'a>(val: Option<&'a Json>, it: Split<'_, char>) -> Option<&'a Json> {
-    unimplemented!()
+pub fn eval_nested_key<'a>(val: &'a Json, keys: &[&str]) -> Option<&'a Json> {
+    let mut opt_val = Some(val);
+    for key in keys {
+        if let Some(v) = opt_val {
+            opt_val = v.get(key)
+        } else {
+            return None
+        }
+    }
+    return opt_val
 }
 
 /// evaluate the key command
-pub fn eval_key<'a>(db: &mut InMemDb, key: String) -> Result<Arc<Json>, Error> {
-    let mut it = key.split('.');
-    let key = it.next().ok_or_else(|| Error::BadKey(key.clone()))?;
-    let ref_val = db.key(key).ok_or_else(|| Error::BadKey(key.to_string()))?;
-    let val = eval_nested_key(Some(&ref_val), it);
+pub fn eval_key<'a>(db: &mut InMemDb, keys: &[&str]) -> Result<Arc<Json>, Error> {
+
+    let key = keys[0];
+    let val = db.get(key)?;
+    let val = eval_nested_key(&val, &keys[2..]);
     let r: Json = if let Some(val) = val {
         val.clone()
     } else {
@@ -230,11 +237,11 @@ mod tests {
     #[test]
     fn test_eval_nested_key() {
         let it = "address.line1".split('.');
-        assert_eq!(None, eval_nested_key(None, it));
+        let val = json!({"a": 1});
+        assert_eq!(None, eval_nested_key(&val, &["b"]));
 
         let val = json!({"orders": [1,2,3,4,5]});
-        let it = "orders".split('.');
-        assert_eq!(Some(&json!([1,2,3,4,5])), eval_nested_key(Some(&val), it));
+        assert_eq!(Some(&json!([1,2,3,4,5])), eval_nested_key(&val, &["orders"]));
 
         let val = json!({"orders": [
             {"qty": 1},
@@ -243,8 +250,7 @@ mod tests {
             {"qty": 4},
             {"qty": 5},
         ]});
-        let it = "orders.qty".split('.');
-        assert_eq!(Some(&json!([1,2,3,4,5])), eval_nested_key(Some(&val), it));
+        assert_eq!(Some(&json!([1,2,3,4,5])), eval_nested_key(&val, &["orders","qty"]));
 
         let val = json!({"orders": [
             {"customer": {"name": "alice"}},
@@ -255,7 +261,6 @@ mod tests {
             {"customer": {"surname": "perry"}},
             {"foo": {"bar": "baz"}},
         ]});
-        let it = "orders.customer.name".split('.');
-        assert_eq!(Some(&json!(["alice", "bob", "charles", "dave", "ewa", Json::Null, Json::Null])), eval_nested_key(Some(&val), it));
+        assert_eq!(Some(&json!(["alice", "bob", "charles", "dave", "ewa", Json::Null, Json::Null])), eval_nested_key(&val, &["orders.customer.name"]));
     }
 }
