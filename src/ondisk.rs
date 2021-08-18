@@ -14,7 +14,7 @@ impl OnDiskDb {
         Ok(OnDiskDb { sled: db })
     }
 
-    pub fn set(&self, key: &str, val: &Json) -> Result<Option<Arc<Json>>, Error> {
+    pub fn set(&self, key: &str, val: &Json) -> Result<Option<Json  >, Error> {
         let bytes = serde_json::to_vec(val).map_err(|_| Error::Serialize)?;
         let iv: Option<sled::IVec> = self
             .sled
@@ -26,7 +26,7 @@ impl OnDiskDb {
         }
     }
 
-    pub fn get(&self, key: &str) -> Result<Option<Arc<Json>>, Error> {
+    pub fn get(&self, key: &str) -> Result<Option<Json>, Error> {
         let val = self.sled.get(key).map_err(|_| Error::BadIO)?;
         match val {
             Some(v) => ivec_to_json_opt(&v),
@@ -39,11 +39,11 @@ impl OnDiskDb {
     }
 }
 
-pub fn ivec_to_json_opt(ivec: &sled::IVec) -> Result<Option<Arc<Json>>, Error> {
+pub fn ivec_to_json_opt(ivec: &sled::IVec) -> Result<Option<Json>, Error> {
     ivec_to_json(ivec).map(Some)
 }
 
-pub fn ivec_to_json(ivec: &sled::IVec) -> Result<Arc<Json>, Error> {
+pub fn ivec_to_json(ivec: &sled::IVec) -> Result<Json, Error> {
     let val: Json = serde_json::from_slice(ivec.as_ref()).map_err(|_| Error::Serialize)?;
-    Ok(Arc::new(val))
+    Ok(val)
 }

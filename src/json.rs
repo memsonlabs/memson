@@ -356,8 +356,8 @@ pub fn json_first<'a>(val: &'a Json) -> Option<&Json> {
 }
 
 /// retrieves the last element in the json value.
-pub fn json_last<'a>(val: &'a Json) -> Option<Arc<Json>> {
-    /*
+pub fn json_last<'a>(val: &'a Json) -> Option<&Json> {
+    
     match val {
         Json::Array(ref arr) => {
             if arr.is_empty() {
@@ -368,8 +368,6 @@ pub fn json_last<'a>(val: &'a Json) -> Option<Arc<Json>> {
         }
         val => Some(val),
     }
-    */
-    unimplemented!()
 }
 
 /// sums the json value.
