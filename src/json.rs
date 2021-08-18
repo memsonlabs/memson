@@ -338,21 +338,18 @@ pub fn json_append(val: &mut Json, elem: Json) {
 
 /// retrieves the first element in the json value.
 //TODO refactor arg from ref to val
-pub fn json_first<'a>(val: &'a Json) -> Option<&Json> {
-    unimplemented!()
-    /*
+pub fn json_first<'a>(val: &Json) -> Option<Json> {
     match val {
-        Json::Array(ref arr) => if !arr.is_empty() { Some(JsonVal::Ref(&arr[0])) } else { None }
+        Json::Array(ref arr) => if !arr.is_empty() { Some(arr[0].clone()) } else { None }
         Json::String(s) => {
             let mut it = s.chars();
             match it.next() {
-                Some(c) => Some(Arc::new(Json::from(c.to_string()))),
+                Some(c) => Some(Json::from(c.to_string())),
                 None => None,
             }
         }
-        val => Some(JsonVal::Ref(val))
+        val => Some(val.clone())
     }
-    */
 }
 
 /// retrieves the last element in the json value.
@@ -494,6 +491,7 @@ fn json_bar_num_num(lhs: &Number, rhs: &Number) -> Result<Json, Error> {
 
 /// subtraction of two json values
 pub fn json_sub(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
+    println!("lhs={:?}\nrhs={:?}", lhs, rhs);
     match (lhs, rhs) {
         (Json::Array(lhs), Json::Array(rhs)) => json_sub_arrs(lhs, rhs),
         (Json::Array(lhs), rhs) => json_sub_arr_num(lhs, rhs),
@@ -833,7 +831,7 @@ pub fn json_string(x: &Json) -> Json {
     }
 }
 
-pub fn json_get(key: &str, val: &Json) -> Option<Json> {
+pub fn json_get(key: &str, val: Json) -> Option<Json> {
     match val {
         Json::Array(arr) => {
             if arr.is_empty() {
@@ -858,7 +856,7 @@ pub fn json_get(key: &str, val: &Json) -> Option<Json> {
                 None
             }
         }
-        _ => None,
+        val => Some(val),
     }
 }
 
@@ -1151,8 +1149,8 @@ mod tests {
     #[test]
     fn json_get_arr_obj() {
         let obj = json!({"name":"anna", "age": 28});
-        assert_eq!(Some(Json::from("anna")), json_get("name", &obj));
-        assert_eq!(Some(Json::from(28)), json_get("age", &obj));
+        assert_eq!(Some(Json::from("anna")), json_get("name", obj.clone()));
+        assert_eq!(Some(Json::from(28)), json_get("age", obj));
     }
 
     #[test]

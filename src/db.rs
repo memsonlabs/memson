@@ -938,12 +938,7 @@ mod tests {
         assert_eq!(Ok(json!(true)), eval(&mut db, key("b")));
         assert_eq!(Ok(json!(true)), eval(&mut db, key("b")));
         assert_eq!(
-            Ok(json!([
-                1,
-                2,
-                3,
-                4,
-            ])),
+            Ok(json!([1, 2, 3, 4, 5])),
             eval(&mut db, key("ia"))
         );
         assert_eq!(Ok(json!(2)), eval(&mut db, key("i")));

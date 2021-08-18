@@ -23,7 +23,7 @@ pub fn eval_nested_key<'a>(val: Json, keys: &[&str]) -> Option<Json> {
 pub fn eval_keys<'a>(db: &InMemDb, keys: &[&str]) -> Option<Json> {
     let key = keys[0];
     let val = db.key(key)?;
-    eval_nested_key(val.clone(), keys)
+    eval_nested_key(val.clone(), &keys[1..])
 }
 
 
