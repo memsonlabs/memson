@@ -1,5 +1,3 @@
-use std::sync::Arc;
-use serde::Serialize;
 use crate::err::Error;
 use crate::cmd::Range;
 use rayon::prelude::*;
@@ -338,23 +336,19 @@ pub fn json_append(val: &mut Json, elem: Json) {
 
 /// retrieves the first element in the json value.
 //TODO refactor arg from ref to val
-pub fn json_first<'a>(val: &Json) -> Option<Json> {
+pub fn json_first(val: &Json) -> Option<Json> {
     match val {
         Json::Array(ref arr) => if !arr.is_empty() { Some(arr[0].clone()) } else { None }
         Json::String(s) => {
             let mut it = s.chars();
-            match it.next() {
-                Some(c) => Some(Json::from(c.to_string())),
-                None => None,
-            }
+            it.next().map(|c| Json::from(c.to_string()))
         }
         val => Some(val.clone())
     }
 }
 
 /// retrieves the last element in the json value.
-pub fn json_last<'a>(val: &'a Json) -> Option<&Json> {
-    
+pub fn json_last(val: &Json) -> Option<&Json> {
     match val {
         Json::Array(ref arr) => {
             if arr.is_empty() {
@@ -793,10 +787,8 @@ pub fn json_f64(val: &Json) -> Option<f64> {
         Json::Number(num) => {
             if let Some(x) = num.as_f64() {
                 Some(x)
-            } else if let Some(x) = num.as_i64() {
-                Some(x as f64)
             } else {
-                None
+                num.as_i64().map(|x| x as f64)
             }
         }
         _ => None,
@@ -849,13 +841,7 @@ pub fn json_get(key: &str, val: Json) -> Option<Json> {
                 Some(Json::Array(out))
             }
         }
-        Json::Object(obj) => {
-            if let Some(val) = obj.get(key) {
-                Some(val.clone())
-            } else {
-                None
-            }
-        }
+        Json::Object(obj) => obj.get(key).cloned(),
         val => Some(val),
     }
 }
@@ -894,24 +880,24 @@ pub fn json_median(_val: &Json) -> Result<Json, Error> {
     unimplemented!()
 }
 
+type F = fn(&Json) -> Result<Json, Error>; 
 
-fn map<'a>(f: &str) -> Option<fn(&'a Json) -> Result<Json, Error>> {
-    unimplemented!()
-    /* match f {
-        "avg" => Some(|x| json_avg(x).map(Arc::new)),
-        "dev" => Some(|x| json_dev(x).map(Arc::new)),
-        "first" => Some(|x| Ok(json_first(x).unwrap_or(Arc::new(Json::Null)))),
-        "flat" => Some(|x| Ok(Arc::new(json_flat(x)))), //TODO remove clone
-        "json" => Some(|x| Ok(JsonVal::Ref(x))),
-        "last" => Some(|x| Ok(json_last(x))),
-        "len" => Some(|x| Ok(Arc::new(json_count(x)))),
-        "max" => Some(|x| Ok(wrap(json_max(x)))),
-        "min" => Some(|x| Ok(wrap(json_min(x)))),
-        "sum" => Some(|x| Ok(Arc::new(json_sum(x)))),
-        "unique" => Some(|x| Ok(Arc::new(json_unique(x)))),
-        "var" => Some(|x| json_var(x).map(Arc::new)),
+fn map(f: &str) -> Option<F> {
+    match f {
+        "avg" => Some(|x| json_avg(x)),
+        "dev" => Some(|x| json_dev(x)),
+        "first" => Some(|x| Ok(json_first(x).unwrap_or(Json::Null))),
+        "flat" => Some(|x| Ok(json_flat(x))), //TODO remove clone
+        "json" => Some(|x| Ok(x.clone())),
+        //"last" => Some(|x| Ok(json_last(x))),
+        "len" => Some(|x| Ok(json_count(x))),
+        //"max" => Some(|x| Ok(wrap(json_max(x)))),
+        //"min" => Some(|x| Ok(wrap(json_min(x)))),
+        "sum" => Some(|x| Ok(json_sum(x))),
+        "unique" => Some(|x| Ok(json_unique(x))),
+        "var" => Some(|x| json_var(x)),
         _ => None,
-    } */
+    }
 }
 
 pub fn json_has(val: &Json, key: &str) -> Json {
@@ -1047,11 +1033,11 @@ fn arr_slice(arr: &[Json], start: Option<usize>, end: Option<usize>) -> Result<&
     //Ok(Json::Array(s))
 }
 
-pub fn json_slice(val: &Json, range: Range) -> Result<Arc<Json>, Error> {
+pub fn json_slice(val: &Json, range: Range) -> Result<Json, Error> {
     match val {
         Json::Array(ref vec) => {
             let s = arr_slice(vec, range.start, range.size)?;
-            Ok(Arc::new(Json::from(s.to_owned())))
+            Ok(Json::from(s.to_owned()))
         }
         _ => Err(Error::ExpectedArr),
     }
@@ -1119,6 +1105,13 @@ fn num_cmp(x: &Number, y: &Number) -> Ordering {
                 Ordering::Greater
             }
         }
+    }
+}
+
+pub fn json_len(val: &Json) -> usize {
+    match val {
+        Json::Array(arr) => arr.len(),
+        _ => 1,
     }
 }
 

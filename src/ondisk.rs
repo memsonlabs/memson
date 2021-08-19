@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use crate::err::Error;
 use crate::json::Json;
 use sled::Iter;

@@ -1,3 +1,4 @@
+use crate::apply::apply;
 use crate::cmd::{Cmd, QueryCmd};
 use crate::db::Query;
 use crate::inmem::InMemDb;
@@ -6,7 +7,7 @@ use crate::Error;
 use core::option::Option::Some;
 
 
-pub fn eval_nested_key<'a>(val: Json, keys: &[&str]) -> Option<Json> {
+pub fn eval_nested_key(val: Json, keys: &[&str]) -> Option<Json> {
     let mut opt_val = Some(val);
     for key in keys {
         if let Some(v) = opt_val {
@@ -16,11 +17,11 @@ pub fn eval_nested_key<'a>(val: Json, keys: &[&str]) -> Option<Json> {
             return None
         }
     }
-    return opt_val
+    opt_val
 }
 
 /// evaluate the key command
-pub fn eval_keys<'a>(db: &InMemDb, keys: &[&str]) -> Option<Json> {
+pub fn eval_keys(db: &InMemDb, keys: &[&str]) -> Option<Json> {
     let key = keys[0];
     let val = db.key(key)?;
     eval_nested_key(val.clone(), &keys[1..])
@@ -42,124 +43,122 @@ fn eval_key(val: &Json, key: &str) -> Option<Json> {
 }
 
 
-pub fn eval_append<'a>(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
-/*     let elem = db.eval(arg)?;
-    let val = db.get_mut(&key)?;
-    json_append(val, elem.into());
-    Ok(Json::Null) */
-    unimplemented!()
+pub fn eval_append(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
+    let elem = db.eval(arg)?;
+    let val = db.get_mut(key)?;
+    json_append(val, elem);
+    Ok(Json::Null)
 }
 
 /// evaluate the sort command
-pub fn eval_sort_cmd<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
-    let mut val: Json = db.eval(arg)?.clone();
+pub fn eval_sort_cmd(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let mut val: Json = db.eval(arg)?;
     json_sort(&mut val, false);
     Ok(val)
 }
 
 /// evaluate the insert command
-pub fn eval_insert<'a>(db: &mut InMemDb, key: &str, arg: Vec<JsonObj>) -> Result<Json, Error> {
-    let val = db.get_mut(&key)?;
+pub fn eval_insert(db: &mut InMemDb, key: &str, arg: Vec<JsonObj>) -> Result<Json, Error> {
+    let val = db.get_mut(key)?;
     let n = arg.len();
     json_insert(val, arg);
     Ok(Json::from(n))
 }
 
-pub fn eval_push<'a>(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
+pub fn eval_push(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
     let val: Json = db.eval(arg)?;
-    let kv = db.get_mut(&key)?;
+    let kv = db.get_mut(key)?;
     json_push(kv, val);
     Ok(Json::Null)
 }
 
-pub fn eval_reverse<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
-    let mut val: Json = db.eval(arg)?.clone();
+pub fn eval_reverse(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let mut val: Json = db.eval(arg)?;
     json_reverse(&mut val);
     Ok(val)
 }
 
-pub fn eval_map<'a>(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Json, Error> {
+pub fn eval_map(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Json, Error> {
     let val = db.eval(arg)?;
     json_map(&val, key)
 }
 
-pub fn eval_flat<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+pub fn eval_flat(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
     let val = db.eval(arg)?;
     let val: Json = json_flat(&val);
     Ok(val)
 }
 
-pub fn eval_numsort<'a>(db: &mut InMemDb, arg: Cmd, descend: bool) -> Result<Json, Error> {
+pub fn eval_numsort(db: &mut InMemDb, arg: Cmd, descend: bool) -> Result<Json, Error> {
     let val: Json = db.eval(arg)?;
     Ok(json_numsort(val, descend))
 }
 
-pub fn eval_median<'a>(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+pub fn eval_median(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
     let val = db.eval(arg)?;
     json_median(&val)
 }
 
-pub fn eval_sortby<'a>(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Json, Error> {
+pub fn eval_sortby(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Json, Error> {
     let mut val: Json = db.eval(arg)?;
     json_sortby(&mut val, &key);
     Ok(val)
 }
 
-pub fn eval_eq<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_eq(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let lhs = db.eval(lhs)?;
     let rhs = db.eval(rhs)?;
     Ok(json_eq(&lhs, &rhs))
 }
 
-pub fn eval_not_eq<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_not_eq(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     Ok(json_not_eq(&x, &y))
 }
 
-pub fn eval_lt<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_lt(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     Ok(json_lt(&x, &y))
 }
 
-
-pub fn eval_gt<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_gt(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     Ok(json_gt(&x, &y))
 }
 
-pub fn eval_lte<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_lte(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     let val = json_lte(&x, &y);
     Ok(val)
 }
 
-pub fn eval_gte<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_gte(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     let val: Json = json_gte(&x, &y);
     Ok(val)
 }
 
-pub fn eval_and<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_and(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     let val = json_lte(&x, &y);
     Ok(val)
 }
 
-pub fn eval_or<'a>(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+pub fn eval_or(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     let val = json_gte(&x, &y);
     Ok(val)
 }
 
-pub fn eval_max(db: &mut InMemDb, arg: Box<Cmd>) -> Result<Json, Error> {
-    let val = db.eval(*arg)?;
+pub fn eval_max(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let val = db.eval(arg)?;
     let max_val = json_max(&val);
     let val: Json = if let Some(val) = max_val {
         val.clone()
@@ -169,7 +168,7 @@ pub fn eval_max(db: &mut InMemDb, arg: Box<Cmd>) -> Result<Json, Error> {
     Ok(val)
 }
 
-pub fn eval_min<'a>(db: &'a mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+pub fn eval_min(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
     let val = db.eval(arg)?;
     let min_val = json_min(&val);
     let val = if let Some(val) = min_val {
@@ -203,21 +202,18 @@ pub fn eval_bin_fn(db: &mut InMemDb, lhs: Cmd, rhs: Cmd, f: &dyn Fn(&Json, &Json
 
 /// evaluate filter to filter out data
 pub fn eval_filter(cmd: Cmd, val: &Json) -> Option<bool> {
-    /*
+
     let r = apply(cmd, val).ok();
     if let Some(g) = r {
         g.as_bool()
     } else {
         None
     }
-    */
-    unimplemented!()
 }
 
 //TODO refactor to take Json val instead of rows to make more generic
 pub fn eval_rows_cmd(cmd: Cmd, rows: &Json) -> Option<Json> {
-    //apply(cmd, rows).ok()
-    unimplemented!()
+    apply(cmd, rows).ok()
 }
 
 #[cfg(test)]

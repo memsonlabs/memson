@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use crate::apply::apply_rows;
 use crate::cmd::{Cmd, QueryCmd};
 use crate::err::Error;
 use crate::eval::*;
@@ -24,12 +24,12 @@ impl Memson {
         Ok(Self { mem_db, disk_db })
     }
 
-    pub(crate) fn eval<'a>(&'a mut self, cmd: Cmd) -> Result<Json, Error> {
+    pub(crate) fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
         match cmd {
             Cmd::Set(key, arg) => {
                 let v: Json = self.eval(*arg)?;
                 match self.disk_db.set(&key, &v)? {
-                    Some(val) => Ok(val.clone()),
+                    Some(val) => Ok(val),
                     None => Ok(Json::Null),
                 }
             }
@@ -220,9 +220,8 @@ impl<'a> Query<'a> {
         //todo the cmds vec is not neccessary
         let mut projections = Map::new();
         for (name, select) in selects {
-            unimplemented!();
-            //let val = apply_rows(select.clone(), rows.as_slice())?;
-            //projections.insert(name.to_string(), val);
+            let val = apply_rows(select.clone(), rows.as_slice())?;
+            projections.insert(name.to_string(), val);
         }
         Ok(Json::Object(projections))
     }
@@ -987,7 +986,7 @@ mod tests {
 
     #[test]
     fn select_all_query() {
-        let qry = query(json!({"from": "t"}));
+        let qry = query(json!({"from": {"key": "t"}}));
         assert_eq!(Ok(table_data()), qry);
     }
 

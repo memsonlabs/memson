@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use crate::json::*;
 use crate::eval::*;
 use crate::cmd::{Cmd, QueryCmd, Range};
@@ -78,7 +77,7 @@ impl InMemDb {
     }
 
     pub fn get_mut(&mut self, key: &str) -> Result<&mut Json, Error> {
-        self.cache.get_mut(key).ok_or(Error::BadKey(key.to_string()))
+        self.cache.get_mut(key).ok_or_else(|| Error::BadKey(key.to_string()))
     }
 
     pub fn key(&self, key: &str) -> Option<&Json> {
@@ -119,10 +118,10 @@ impl InMemDb {
             Cmd::Json(val) => Ok(val),
             Cmd::Keys(page) => Ok(Json::Array(self.keys(page))),
             Cmd::Last(arg) => self.eval_unr_fn(*arg, &|x| {
-                let val = json_last(x).map(|x| x.clone()).unwrap_or(Json::Null);
+                let val = json_last(x).cloned().unwrap_or(Json::Null);
                 Ok(val)
             }),
-            Cmd::Max(arg) => eval_max(self, arg),
+            Cmd::Max(arg) => eval_max(self, *arg),
             Cmd::In(lhs, rhs) => eval_bin_fn(self, *lhs, *rhs, &|x, y| Ok(json_in(x, y))),
             Cmd::Min(arg) => eval_min(self, *arg),
             Cmd::Mul(lhs, rhs) => eval_bin_fn(self, *lhs, *rhs, &|x, y| json_mul(x, y)),
@@ -155,7 +154,7 @@ impl InMemDb {
             Cmd::Var(arg) => self.eval_unr_fn(*arg, &|x| json_var(x)),
             Cmd::ToString(arg) => Ok(self.eval(*arg)?),
             Cmd::Key(key) => {
-                let keys: Vec<&str> = key.split(".").collect();
+                let keys: Vec<&str> = key.split('.').collect();
                 Ok(eval_keys(self, &keys).unwrap_or(Json::Null))
             }
             Cmd::Reverse(arg) => eval_reverse(self, *arg),
@@ -179,7 +178,7 @@ impl InMemDb {
         }
     }   
 
-    pub fn eval_unr_fn<'a>(&'a mut self, arg: Cmd, f: &dyn Fn(&Json) -> Result<Json, Error>) -> Result<Json, Error>
+    pub fn eval_unr_fn(&mut self, arg: Cmd, f: &dyn Fn(&Json) -> Result<Json, Error>) -> Result<Json, Error>
     {
         let val: Json = self.eval(arg)?;
         //Ok(JsonVal::Ref(val_ref))
@@ -211,7 +210,7 @@ impl InMemDb {
 
     /// execute query
     pub fn query(&self, cmd: QueryCmd) -> Result<Json, Error> {
-        let qry = Query::from(&self, cmd);
+        let qry = Query::from(self, cmd);
         qry.exec()
     }
 }
@@ -573,18 +572,18 @@ mod tests {
 
     #[test]
     fn test_first() {
-        let mut db = InMemDb::new();
+        let mut db = test_db();
         assert_eq!(Ok(json!(true)), eval(&mut db, first(key("b"))));
         assert_eq!(Ok(json!(true)), eval(&mut db, first(key("b"))));
         assert_eq!(Ok(json!(3.3)), eval(&mut db, first(key("f"))));
         assert_eq!(Ok(json!(2)), eval(&mut db, first(key("i"))));
         assert_eq!(Ok(json!(1.1)), eval(&mut db, first(key("fa"))));
-        assert_eq!(Ok(json!(10)), eval(&mut db, first(key("ia"))));
+        assert_eq!(Ok(json!(1)), eval(&mut db, first(key("ia"))));
     }
 
     #[test]
     fn test_last() {
-        let mut db = InMemDb::new();
+        let mut db = test_db();
         assert_eq!(Ok(json!(true)), eval(&mut db, last(key("b"))));
         assert_eq!(Ok(json!(3.3)), eval(&mut db, last(key("f"))));
         assert_eq!(Ok(json!(2)), eval(&mut db, last(key("i"))));
@@ -594,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_max() {
-        let mut db = InMemDb::new();
+        let mut db = test_db();
         assert_eq!(Ok(json!(true)), eval(&mut db, max(key("b"))));
         assert_eq!(Ok(json!(2)), eval(&mut db, max(key("i"))));
         assert_eq!(Ok(json!(3.3)), eval(&mut db, max(key("f"))));
@@ -604,7 +603,7 @@ mod tests {
 
     #[test]
     fn test_min() {
-        let mut db = InMemDb::new();
+        let mut db = test_db();
         assert_eq!(Ok(json!(true)), eval(&mut db, min(key("b"))));
         assert_eq!(Ok(json!(2)), eval(&mut db, min(key("i"))));
         assert_eq!(Ok(json!(3.3)), eval(&mut db, min(key("f"))));
@@ -614,7 +613,7 @@ mod tests {
 
     #[test]
     fn test_avg() {
-        let mut db = InMemDb::new();
+        let mut db = test_db();
         assert_eq!(Ok(json!(3.3)), eval(&mut db, avg(key("f"))));
         assert_eq!(Ok(json!(2)), eval(&mut db, avg(key("i"))));
         assert_eq!(Ok(json!(3.3)), eval(&mut db, avg(key("fa"))));

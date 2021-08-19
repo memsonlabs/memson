@@ -29,13 +29,13 @@ where
 }
 
 /// apply boolean function to process binary gates
-fn apply_bool_fn<'a, F>(lhs: Cmd, rhs: Cmd, rows: &'a [Json], f: F) -> Result<JsonVal<'a>, Error>
+fn apply_bool_fn<F>(lhs: Cmd, rhs: Cmd, rows: &[Json], f: F) -> Result<Json, Error>
 where
     F: FnOnce(&Json, &Json) -> bool,
 {
     let x = apply_rows(lhs, rows)?;
     let y = apply_rows(rhs, rows)?;
-    Ok(Arc::new(f(&x, &y)))
+    Ok(Json::from(f(&x, &y)))
 }
 
 fn apply_key(key: String, rows: &[Json]) -> Json {
@@ -79,13 +79,13 @@ fn apply_max(arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
                     || None,
                     |x, y| {
                         if let Some(x) = x {
-                            if gt(x, &y) {
+                            if gt(x, y) {
                                 Some(x)
                             } else {
-                                Some(&y)
+                                Some(y)
                             }
                         } else {
-                            Some(&y)
+                            Some(y)
                         }
                     },
                 )
@@ -105,24 +105,17 @@ fn apply_max(arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
     }
 }
 
-fn apply_eval<'a>(cmds: Vec<Cmd>, rows: &'a [Json]) -> Result<JsonVal<'a>, Error> {
-    /*
-    let vals: Result<Vec<JsonVal<'a>>, Error> = cmds
-        .par_iter()
-        .map(|cmd| apply_rows(cmd.clone(), rows))
-        .collect();
-    Ok(Json::Array(vals?))
-    */
-    unimplemented!()
+fn apply_eval(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
+    apply_rows(cmd, rows)
 }
 
 fn apply_get(key: String, arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
     let val = apply_rows(arg, rows)?;
-    json_get(&key, &val).ok_or(Error::BadKey(key))
+    json_get(&key, val).ok_or(Error::BadKey(key))
 }
 
 fn apply_median(arg: Cmd, rows: &[Json]) -> Result<Json, Error> {
-    let mut val = apply_rows(arg, rows)?;
+    let val = apply_rows(arg, rows)?;
     json_median(&val)
 }
 
@@ -175,7 +168,7 @@ fn apply_numsort(arg: Cmd, descend: bool, rows: &[Json]) -> Result<Json, Error> 
     Ok(json_numsort(val, descend))
 }
 
-fn apply_slice<'a>(arg: Cmd, range: Range, rows: &'a [Json]) -> Result<JsonVal<'a>, Error> {
+fn apply_slice(arg: Cmd, range: Range, rows: &[Json]) -> Result<Json, Error> {
     let val = apply_rows(arg, rows)?;
     json_slice(&val, range)
 }
@@ -183,7 +176,7 @@ fn apply_slice<'a>(arg: Cmd, range: Range, rows: &'a [Json]) -> Result<JsonVal<'
 /// apply a cmd to rows of json
 pub fn apply_rows(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
     match cmd {
-        Cmd::Key(key) => Ok(Arc::new(apply_key(key, rows))),
+        Cmd::Key(key) => Ok(apply_key(key, rows)),
         Cmd::Sum(arg) => apply_sum(*arg, rows),
         Cmd::Max(arg) => apply_max(*arg, rows),
         Cmd::Append(_, _) => Err(Error::BadCmd),
@@ -200,8 +193,8 @@ pub fn apply_rows(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
         Cmd::Sub(lhs, rhs) => apply_bin_fn(*lhs, *rhs, rows, json_sub),
         Cmd::Mul(lhs, rhs) => apply_bin_fn(*lhs, *rhs, rows, json_mul),
         Cmd::Div(lhs, rhs) => apply_bin_fn(*lhs, *rhs, rows, json_div),
-        Cmd::First(arg) => apply_unr_fn(*arg, rows, |x| Ok(json_first(x))),
-        Cmd::Last(arg) => apply_unr_fn(*arg, rows, |x| Ok(json_last(x))),
+        Cmd::First(arg) => apply_unr_fn(*arg, rows, |x| Ok(json_first(x).unwrap_or(Json::Null))),
+        Cmd::Last(arg) => apply_unr_fn(*arg, rows, |x| Ok(json_last(x).cloned().unwrap_or(Json::Null))),
         Cmd::Var(arg) => apply_unr_fn(*arg, rows, json_var),
         Cmd::Push(_, _) => Err(Error::BadCmd),
         Cmd::Pop(_) => Err(Error::BadCmd),
@@ -218,7 +211,7 @@ pub fn apply_rows(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
         Cmd::Reverse(arg) => apply_reverse(*arg, rows),
         Cmd::SortBy(arg, key) => apply_sortby(*arg, key, rows),
         Cmd::Median(arg) => apply_median(*arg, rows),
-        Cmd::Eval(cmds) => apply_eval(cmds, rows),
+        Cmd::Eval(cmd) => apply_eval(*cmd, rows),
         Cmd::Eq(lhs, rhs) => apply_bin_fn(*lhs, *rhs, rows, |x, y| Ok(json_eq(x, y))),
         Cmd::NotEq(lhs, rhs) => apply_bin_fn(*lhs, *rhs, rows, |x, y| Ok(json_not_eq(x, y))),
         Cmd::Gt(lhs, rhs) => apply_bool_fn(*lhs, *rhs, rows, gt),
@@ -233,6 +226,8 @@ pub fn apply_rows(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
         Cmd::NumSort(arg, descend) => apply_numsort(*arg, descend, rows),
         Cmd::Has(key) => apply_has(key, rows),
         Cmd::Slice(arg, range) => apply_slice(*arg, range, rows),
+        Cmd::InnerJoin(_, _, _, _, _) => unimplemented!(),
+        Cmd::OuterJoin(_, _, _, _, _) => unimplemented!(),
     }
 }
 
@@ -311,10 +306,14 @@ pub fn apply(cmd: Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Div(x, y) => json_div(&apply(*x, val)?, &apply(*y, val)?),
         Cmd::First(arg) => {
             let val: Json = apply(*arg, val)?;
-            let arg: JsonVal = json_first(val.as_ref()).unwrap_or(Arc::new(Json::Null));
-            Ok(arg.into())
+            let arg = json_first(&val).unwrap_or(Json::Null);
+            Ok(arg)
         }
-        Cmd::Last(arg) => Ok(json_last(&apply(*arg, val)?)),
+        Cmd::Last(arg) => {
+            let val = apply(*arg, val)?;
+            let val = json_last(&val).cloned().unwrap_or(Json::Null);
+            Ok(val)
+        }
         Cmd::Var(arg) => json_var(&apply(*arg, val)?),
         Cmd::Push(_, _) => Err(Error::BadCmd),
         Cmd::Pop(_) => Err(Error::BadCmd),
@@ -324,7 +323,7 @@ pub fn apply(cmd: Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Len(arg) => Ok(json_count(&apply(*arg, val)?)),
         Cmd::Unique(arg) => Ok(json_unique(&apply(*arg, val)?)),
         Cmd::Summary => Err(Error::BadCmd),
-        Cmd::Get(key, arg) => Ok(json_get(&key, &apply(*arg, val)?).unwrap_or(Json::Null)),
+        Cmd::Get(key, arg) => Ok(json_get(&key, apply(*arg, val)?).unwrap_or(Json::Null)),
         Cmd::ToString(arg) => Ok(Json::from(json_tostring(&apply(*arg, val)?))),
         Cmd::Sort(arg, descend) => {
             let mut val = apply(*arg, val)?;
@@ -342,16 +341,13 @@ pub fn apply(cmd: Cmd, val: &Json) -> Result<Json, Error> {
             Ok(val)
         }
         Cmd::Median(arg) => {
-            let mut val = apply(*arg, val)?;
-            json_median(&mut val)?;
+            let val = apply(*arg, val)?;
+            json_median(&val)?;
             Ok(val)
         }
-        Cmd::Eval(cmds) => {
-            let mut out = Vec::new();
-            for cmd in cmds {
-                out.push(apply(cmd, val)?);
-            }
-            Ok(Json::from(out))
+        Cmd::Eval(cmd) => {
+            let val = apply(*cmd, val)?;
+            Ok(Json::from(vec![val]))
         }
         Cmd::NotEq(lhs, rhs) => Ok(noteq(&apply(*lhs, val)?, &apply(*rhs, val)?)),
         Cmd::Gt(lhs, rhs) => Ok(json_gt(&apply(*lhs, val)?, &apply(*rhs, val)?)),
@@ -384,7 +380,13 @@ pub fn apply(cmd: Cmd, val: &Json) -> Result<Json, Error> {
         Cmd::Slice(arg, range) => {
             let val: Json = apply(*arg, val)?;
             let val = json_slice(&val, range)?;
-            Ok(val.into())
+            Ok(val)
+        }
+        Cmd::InnerJoin(_, _, _, _, _) => {
+            unimplemented!()
+        }
+        Cmd::OuterJoin(_, _, _, _, _) => {
+            unimplemented!()
         }
     }
 }
