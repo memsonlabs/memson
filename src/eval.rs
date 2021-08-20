@@ -182,11 +182,6 @@ pub fn eval_query(db: &InMemDb, cmd: QueryCmd) -> Result<Json, Error> {
     qry.exec()
 }
 
-// evaluation of the pop command
-pub fn pop(db: &InMemDb, key: String) -> Result<Option<Json>, Error> {
-    unimplemented!()
-}
-
 // evaluate binary function (a fn with 2 args)
 pub fn eval_bin_fn(
     db: &mut InMemDb,

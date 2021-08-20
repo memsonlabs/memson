@@ -126,9 +126,10 @@ impl InMemDb {
             Cmd::Min(arg) => eval_min(self, *arg),
             Cmd::Mul(lhs, rhs) => eval_bin_fn(self, *lhs, *rhs, &|x, y| json_mul(x, y)),
             Cmd::Push(key, arg) => eval_push(self, &key, *arg),
-            Cmd::Pop(key) => {
-                let val = pop(self, key)?;
-                Ok(val.unwrap_or(Json::Null))
+            Cmd::Pop(_key) => {
+                //let val = pop(self, key)?;
+                //Ok(val.unwrap_or(Json::Null))
+                unimplemented!()
             }
             Cmd::Query(cmd) => eval_query(self, cmd),
             Cmd::Set(key, arg) => {
@@ -140,9 +141,8 @@ impl InMemDb {
                 }
             }
             Cmd::Slice(arg, range) => {
-                let _val = self.eval(*arg)?;
-                unimplemented!()
-                //json_slice(val.into(), range)
+                let val: Json = self.eval(*arg)?;
+                json_slice(val, range)
             }
             Cmd::Sort(arg, _) => eval_sort_cmd(self, *arg),
             Cmd::Dev(arg) => self.eval_unr_fn(*arg, &|x| json_dev(x)),
@@ -154,7 +154,7 @@ impl InMemDb {
             Cmd::ToString(arg) => Ok(self.eval(*arg)?),
             Cmd::Key(key) => {
                 let keys: Vec<&str> = key.split('.').collect();
-                let val = self.get(&keys[0]).map(|x| x.clone())?;
+                let val = self.get(keys[0]).map(|x| x.clone())?;
                 Ok(eval_nested_key(val, &keys[1..]).unwrap_or(Json::Null))
             }
             Cmd::Reverse(arg) => eval_reverse(self, *arg),
@@ -177,8 +177,8 @@ impl InMemDb {
             Cmd::Flat(arg) => eval_flat(self, *arg),
             Cmd::NumSort(arg, descend) => eval_numsort(self, *arg, descend),
             Cmd::Has(key) => Ok(Json::Bool(self.has(&key))),
-            Cmd::InnerJoin(lhs, rhs, left_key, right_key, prop_key) => unimplemented!(),
-            Cmd::OuterJoin(lhs, rhs, left_key, right_key, prop_key) => unimplemented!(),
+            Cmd::InnerJoin(_lhs, _rhs, _left_key, _right_key, _prop_key) => unimplemented!(),
+            Cmd::OuterJoin(_lhs, _rhs, _left_key, _right_key, _prop_key) => unimplemented!(),
         }
     }
 

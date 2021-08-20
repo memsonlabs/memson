@@ -13,8 +13,8 @@ use std::path::Path;
 pub(crate) const PAGE_SIZE: usize = 50;
 
 pub struct Memson {
-    mem_db: InMemDb,
-    disk_db: OnDiskDb,
+    pub mem_db: InMemDb,
+    pub disk_db: OnDiskDb,
 }
 
 impl Memson {
@@ -22,23 +22,6 @@ impl Memson {
         let disk_db = OnDiskDb::open(path)?;
         let mem_db = InMemDb::load(&disk_db)?;
         Ok(Self { mem_db, disk_db })
-    }
-
-    pub(crate) fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
-        match cmd {
-            Cmd::Set(key, arg) => {
-                let v: Json = self.eval(*arg)?;
-                match self.disk_db.set(&key, &v)? {
-                    Some(val) => Ok(val),
-                    None => Ok(Json::Null),
-                }
-            }
-            cmd => self.mem_db.eval(cmd),
-        }
-    }
-
-    pub(crate) fn query(&mut self, cmd: QueryCmd) -> Result<Json, Error> {
-        self.mem_db.query(cmd)
     }
 }
 

@@ -170,7 +170,7 @@ fn apply_numsort(arg: Cmd, descend: bool, rows: &[Json]) -> Result<Json, Error> 
 
 fn apply_slice(arg: Cmd, range: Range, rows: &[Json]) -> Result<Json, Error> {
     let val = apply_rows(arg, rows)?;
-    json_slice(&val, range)
+    json_slice(val, range)
 }
 
 /// apply a cmd to rows of json
@@ -381,7 +381,7 @@ pub fn apply(cmd: Cmd, val: &Json) -> Result<Json, Error> {
         }
         Cmd::Slice(arg, range) => {
             let val: Json = apply(*arg, val)?;
-            let val = json_slice(&val, range)?;
+            let val = json_slice(val, range)?;
             Ok(val)
         }
         Cmd::InnerJoin(_, _, _, _, _) => {

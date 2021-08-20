@@ -1020,27 +1020,31 @@ pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
             }
             Ok(Json::Array(v))
         }
-        val => f(&val),
+        val => f(val),
     }
 }
 
-fn arr_slice(arr: &[Json], start: Option<usize>, end: Option<usize>) -> Result<&[Json], Error> {
-    let s = match (start, end) {
-        (Some(s), Some(e)) => {
+fn arr_slice(
+    _arr: Vec<Json>,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<Vec<Json>, Error> {
+    let _s = match (start, end) {
+        (Some(_s), Some(_e)) => {
             unimplemented!()
         }
-        (Some(s), None) => unimplemented!(),
-        (None, Some(e)) => unimplemented!(),
+        (Some(_s), None) => unimplemented!(),
+        (None, Some(_s)) => unimplemented!(),
         (None, None) => unimplemented!(),
     };
     //Ok(Json::Array(s))
 }
 
-pub fn json_slice(val: &Json, range: Range) -> Result<Json, Error> {
+pub fn json_slice(val: Json, range: Range) -> Result<Json, Error> {
     match val {
-        Json::Array(ref vec) => {
+        Json::Array(vec) => {
             let s = arr_slice(vec, range.start, range.size)?;
-            Ok(Json::from(s.to_owned()))
+            Ok(Json::from(s))
         }
         _ => Err(Error::ExpectedArr),
     }
