@@ -1,9 +1,8 @@
-
-use crate::json::json_len;
-use crate::Error;
-use crate::json::Json;
 use crate::cmd::Cmd;
 use crate::inmem::InMemDb;
+use crate::json::json_len;
+use crate::json::Json;
+use crate::Error;
 
 pub struct Query {
     selects: Vec<Cmd>,
@@ -20,7 +19,7 @@ impl Query {
 
     fn filter(&self, db: &mut InMemDb, val: Json) -> Result<Json, Error> {
         let gate: Vec<bool> = Vec::with_capacity(json_len(&val));
-        
+
         Ok(val)
     }
 }

@@ -194,7 +194,9 @@ pub fn apply_rows(cmd: Cmd, rows: &[Json]) -> Result<Json, Error> {
         Cmd::Mul(lhs, rhs) => apply_bin_fn(*lhs, *rhs, rows, json_mul),
         Cmd::Div(lhs, rhs) => apply_bin_fn(*lhs, *rhs, rows, json_div),
         Cmd::First(arg) => apply_unr_fn(*arg, rows, |x| Ok(json_first(x).unwrap_or(Json::Null))),
-        Cmd::Last(arg) => apply_unr_fn(*arg, rows, |x| Ok(json_last(x).cloned().unwrap_or(Json::Null))),
+        Cmd::Last(arg) => apply_unr_fn(*arg, rows, |x| {
+            Ok(json_last(x).cloned().unwrap_or(Json::Null))
+        }),
         Cmd::Var(arg) => apply_unr_fn(*arg, rows, json_var),
         Cmd::Push(_, _) => Err(Error::BadCmd),
         Cmd::Pop(_) => Err(Error::BadCmd),

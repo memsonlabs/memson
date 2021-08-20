@@ -6,7 +6,6 @@ use crate::json::*;
 use crate::Error;
 use core::option::Option::Some;
 
-
 pub fn eval_nested_key(val: Json, keys: &[&str]) -> Option<Json> {
     let mut opt_val = Some(val);
     for key in keys {
@@ -14,7 +13,7 @@ pub fn eval_nested_key(val: Json, keys: &[&str]) -> Option<Json> {
             println!("v={:?}\nkey={:?}", v, key);
             opt_val = eval_key(&v, key)
         } else {
-            return None
+            return None;
         }
     }
     opt_val
@@ -26,7 +25,6 @@ pub fn eval_keys(db: &InMemDb, keys: &[&str]) -> Option<Json> {
     let val = db.key(key)?;
     eval_nested_key(val.clone(), &keys[1..])
 }
-
 
 fn eval_key(val: &Json, key: &str) -> Option<Json> {
     match val {
@@ -41,7 +39,6 @@ fn eval_key(val: &Json, key: &str) -> Option<Json> {
         val => val.get(key).cloned(),
     }
 }
-
 
 pub fn eval_append(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
     let elem = db.eval(arg)?;
@@ -191,7 +188,12 @@ pub fn pop(db: &InMemDb, key: String) -> Result<Option<Json>, Error> {
 }
 
 // evaluate binary function (a fn with 2 args)
-pub fn eval_bin_fn(db: &mut InMemDb, lhs: Cmd, rhs: Cmd, f: &dyn Fn(&Json, &Json) -> Result<Json, Error> ) -> Result<Json, Error> {
+pub fn eval_bin_fn(
+    db: &mut InMemDb,
+    lhs: Cmd,
+    rhs: Cmd,
+    f: &dyn Fn(&Json, &Json) -> Result<Json, Error>,
+) -> Result<Json, Error> {
     let x = db.eval(lhs)?;
     let y = db.eval(rhs)?;
     f(&x, &y)
@@ -199,10 +201,8 @@ pub fn eval_bin_fn(db: &mut InMemDb, lhs: Cmd, rhs: Cmd, f: &dyn Fn(&Json, &Json
 
 /// evaluate unary function (a fn with 1 arg)
 
-
 /// evaluate filter to filter out data
 pub fn eval_filter(cmd: Cmd, val: &Json) -> Option<bool> {
-
     let r = apply(cmd, val).ok();
     if let Some(g) = r {
         g.as_bool()
@@ -230,10 +230,7 @@ mod tests {
             Box::new(Cmd::Key("nums".to_string())),
             Box::new(Cmd::Json(json!(3))),
         );
-        assert_eq!(
-            Ok(json!([false, false, true, false, false])),
-            db.eval(cmd)
-        );
+        assert_eq!(Ok(json!([false, false, true, false, false])), db.eval(cmd));
     }
 
     #[test]
@@ -243,7 +240,10 @@ mod tests {
         assert_eq!(None, eval_nested_key(val, &["b"]));
 
         let val = json!({"orders": [1,2,3,4,5]});
-        assert_eq!(Some(json!([1,2,3,4,5])), eval_nested_key(val, &["orders"]));
+        assert_eq!(
+            Some(json!([1, 2, 3, 4, 5])),
+            eval_nested_key(val, &["orders"])
+        );
 
         let val = json!({"orders": [
             {"qty": 1},
@@ -252,7 +252,10 @@ mod tests {
             {"qty": 4},
             {"qty": 5},
         ]});
-        assert_eq!(Some(json!([1,2,3,4,5])), eval_nested_key(val, &["orders","qty"]));
+        assert_eq!(
+            Some(json!([1, 2, 3, 4, 5])),
+            eval_nested_key(val, &["orders", "qty"])
+        );
 
         let val = json!({"orders": [
             {"customer": {"name": "alice"}},
@@ -263,6 +266,17 @@ mod tests {
             {"customer": {"surname": "perry"}},
             {"foo": {"bar": "baz"}},
         ]});
-        assert_eq!(Some(json!(["alice", "bob", "charles", "dave", "ewa", Json::Null, Json::Null])), eval_nested_key(val, &["orders", "customer", "name"]));
+        assert_eq!(
+            Some(json!([
+                "alice",
+                "bob",
+                "charles",
+                "dave",
+                "ewa",
+                Json::Null,
+                Json::Null
+            ])),
+            eval_nested_key(val, &["orders", "customer", "name"])
+        );
     }
 }

@@ -1,5 +1,5 @@
-use crate::err::Error;
 use crate::cmd::Range;
+use crate::err::Error;
 use rayon::prelude::*;
 use serde_json::Number;
 pub use serde_json::{json, Map};
@@ -9,7 +9,7 @@ use std::mem;
 pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
-/* 
+/*
 #[derive(Debug, Serialize, Eq, PartialEq)]
 pub enum JsonVal {
     Box(Arc<Json>),
@@ -33,13 +33,13 @@ impl <'a> JsonVal<'a> {
         match self {
             Arc::new(ref val) => val,
             JsonVal::Ref(val) => *val,
-            _ => unimplemented!(),            
+            _ => unimplemented!(),
         }
     }
 }
 
 impl From<JsonVal<'_>> for Json {
-    fn from(val: JsonVal<'_>) -> Json { 
+    fn from(val: JsonVal<'_>) -> Json {
         match val {
             Arc::new(val) => val,
             JsonVal::Ref(val) => val.clone(),
@@ -48,7 +48,7 @@ impl From<JsonVal<'_>> for Json {
 }
 
 impl From<&JsonVal<'_>> for Json {
-    fn from(val: &JsonVal<'_>) -> Json { 
+    fn from(val: &JsonVal<'_>) -> Json {
         match val {
             Arc::new(val) => val.clone(),
             JsonVal::Ref(val) => (*val).clone(),
@@ -64,7 +64,7 @@ impl AsRef<Json> for JsonVal<'_> {
             JsonVal::Ref(v) => v,
             Arc::new(v) => v,
         }
-    }    
+    }
 }
 
 impl AsMut<Json> for JsonVal<'_> {
@@ -74,7 +74,7 @@ impl AsMut<Json> for JsonVal<'_> {
             Arc::new(v) => v,
             JsonVal::Slice(_) => unimplemented!(),
         }
-    }    
+    }
 } */
 
 // wrapper around json_count to return as a Result
@@ -338,12 +338,18 @@ pub fn json_append(val: &mut Json, elem: Json) {
 //TODO refactor arg from ref to val
 pub fn json_first(val: &Json) -> Option<Json> {
     match val {
-        Json::Array(ref arr) => if !arr.is_empty() { Some(arr[0].clone()) } else { None }
+        Json::Array(ref arr) => {
+            if !arr.is_empty() {
+                Some(arr[0].clone())
+            } else {
+                None
+            }
+        }
         Json::String(s) => {
             let mut it = s.chars();
             it.next().map(|c| Json::from(c.to_string()))
         }
-        val => Some(val.clone())
+        val => Some(val.clone()),
     }
 }
 
@@ -880,7 +886,7 @@ pub fn json_median(_val: &Json) -> Result<Json, Error> {
     unimplemented!()
 }
 
-type F = fn(&Json) -> Result<Json, Error>; 
+type F = fn(&Json) -> Result<Json, Error>;
 
 fn map(f: &str) -> Option<F> {
     match f {

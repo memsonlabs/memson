@@ -187,7 +187,9 @@ impl<'a> Query<'a> {
     /// evaulate the rows from the memson cache
     fn eval_db_rows(&'a self) -> Result<&'a [Value], Error> {
         let val = self.db.get(&self.cmd.from)?;
-        val.as_array().map(|x| x.as_slice()).ok_or(Error::ExpectedArr)
+        val.as_array()
+            .map(|x| x.as_slice())
+            .ok_or(Error::ExpectedArr)
     }
 
     /// evaulate the where statement
@@ -692,71 +694,46 @@ mod tests {
         let mut db = InMemDb::new();
         assert_eq!(Ok(json!(9)), eval(&mut db, add(key("x"), key("y"))));
         assert_eq!(
-            Ok(json!([
-                5,
-                6,
-                7,
-                8,
-                9,
-            ])),
+            Ok(json!([5, 6, 7, 8, 9,])),
             eval(&mut db, add(key("x"), key("ia")))
         );
 
         assert_eq!(
-            Ok(json!([
-                3,
-                4,
-                5,
-                6,
-                7,
-            ])),
+            Ok(json!([3, 4, 5, 6, 7,])),
             eval(&mut db, add(key("ia"), key("i")))
         );
 
         assert_eq!(
-            Ok(json!([
-                Json::Null,
-                4,
-                Json::Null,
-                6,
-                7,
-            ])),
+            Ok(json!([Json::Null, 4, Json::Null, 6, 7,])),
             eval(&mut db, add(key("nia"), key("i")))
         );
 
         assert_eq!(
-            Ok(json!([
-                Json::Null,
-                Json::Null,
-                Json::Null,
-                Json::Null,
-                10,
-            ])),
+            Ok(json!([Json::Null, Json::Null, Json::Null, Json::Null, 10,])),
             eval(&mut db, add(key("nia"), key("nfa")))
         );
 
         assert_eq!(
-            Ok(json!([
-                "ahello",
-                "bhello",
-                "chello",
-                "dhello",
-            ])),
+            Ok(json!(["ahello", "bhello", "chello", "dhello",])),
             eval(&mut db, add(key("sa"), key("s")))
         );
         assert_eq!(
-            Ok(json!([
-                "helloa",
-                "hellob",
-                "helloc",
-                "hellod",
-            ])),
+            Ok(json!(["helloa", "hellob", "helloc", "hellod",])),
             eval(&mut db, add(key("s"), key("sa")))
         );
 
-        assert_eq!(Ok(json!("hellohello")), eval(&mut db, add(key("s"), key("s"))));
-        assert_eq!(Ok(json!("hello3.3")), eval(&mut db, add(key("s"), key("f"))));
-        assert_eq!(Ok(json!("3.3hello")), eval(&mut db, add(key("f"), key("s"))));
+        assert_eq!(
+            Ok(json!("hellohello")),
+            eval(&mut db, add(key("s"), key("s")))
+        );
+        assert_eq!(
+            Ok(json!("hello3.3")),
+            eval(&mut db, add(key("s"), key("f")))
+        );
+        assert_eq!(
+            Ok(json!("3.3hello")),
+            eval(&mut db, add(key("f"), key("s")))
+        );
         assert_eq!(Ok(json!("2hello")), eval(&mut db, add(key("i"), key("s"))));
         assert_eq!(Ok(json!("hello2")), eval(&mut db, add(key("s"), key("i"))));
     }
@@ -767,35 +744,17 @@ mod tests {
         assert_eq!(Ok(json!(-1)), eval(&mut db, sub(key("x"), key("y"))));
         assert_eq!(Ok(json!(1)), eval(&mut db, sub(key("y"), key("x"))));
         assert_eq!(
-            Ok(json!([
-                3,
-                2,
-                1,
-                0,
-                -1,
-            ])),
+            Ok(json!([3, 2, 1, 0, -1,])),
             eval(&mut db, sub(key("x"), key("ia")))
         );
 
         assert_eq!(
-            Ok(json!([
-                -4,
-                -3,
-                -2,
-                -1,
-                0,
-            ])),
+            Ok(json!([-4, -3, -2, -1, 0,])),
             eval(&mut db, sub(key("ia"), key("y")))
         );
 
         assert_eq!(
-            Ok(json!([
-                0,
-                0,
-                0,
-                0,
-                0,
-            ])),
+            Ok(json!([0, 0, 0, 0, 0,])),
             eval(&mut db, sub(key("ia"), key("ia")))
         );
 
@@ -811,23 +770,11 @@ mod tests {
         let mut db = InMemDb::new();
         assert_eq!(Ok(json!(20)), eval(&mut db, mul(key("x"), key("y"))));
         assert_eq!(Ok(json!(16)), eval(&mut db, mul(key("x"), key("x"))));
-        let arr = json!([
-            5,
-            10,
-            15,
-            20,
-            25,
-        ]);
+        let arr = json!([5, 10, 15, 20, 25,]);
         assert_eq!(Ok(arr.clone()), eval(&mut db, mul(key("ia"), key("y"))));
         assert_eq!(Ok(arr), eval(&mut db, mul(key("y"), key("ia"))));
         assert_eq!(
-            Ok(json!([
-                1,
-                4,
-                9,
-                16,
-                25,
-            ])),
+            Ok(json!([1, 4, 9, 16, 25,])),
             eval(&mut db, mul(key("ia"), key("ia")))
         );
         assert_eq!(bad_type(), eval(&mut db, mul(key("s"), key("s"))));
@@ -843,33 +790,15 @@ mod tests {
         assert_eq!(Ok(json!(1.0)), eval(&mut db, div(key("x"), key("x"))));
         assert_eq!(Ok(json!(1.0)), eval(&mut db, div(key("y"), key("y"))));
         assert_eq!(
-            Ok(json!([
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-            ])),
+            Ok(json!([1.0, 1.0, 1.0, 1.0, 1.0,])),
             eval(&mut db, div(key("ia"), key("ia")))
         );
         assert_eq!(
-            Ok(json!([
-                0.5,
-                1.0,
-                1.5,
-                2.0,
-                2.5,
-            ])),
+            Ok(json!([0.5, 1.0, 1.5, 2.0, 2.5,])),
             eval(&mut db, div(key("ia"), key("i")))
         );
         assert_eq!(
-            Ok(json!([
-                2.0,
-                1.0,
-                0.6666666666666666,
-                0.5,
-                0.4,
-            ])),
+            Ok(json!([2.0, 1.0, 0.6666666666666666, 0.5, 0.4,])),
             eval(&mut db, div(key("i"), key("ia")))
         );
 
@@ -884,51 +813,52 @@ mod tests {
     fn test_eval_key() {
         let mut db = InMemDb::new();
         assert_eq!(Ok(orders2_val()), eval(&mut db, key("orders2")));
-        assert_eq!(Ok(json!([0,1,2,3,4])), eval(&mut db, key("orders2.time")));
-        assert_eq!(Ok(json!(["james", "ania", "misha", "james", "james"])), eval(&mut db, key("orders2.customer")));
-        assert_eq!(Ok(json!([2,2,4,10,1])), eval(&mut db, key("orders2.qty")));
-        assert_eq!(Ok(json!([9.0, 2.0, 1.0, 16.0, 16.0])), eval(&mut db, key("orders2.price")));
-        assert_eq!(Ok(json!([10, Json::Null, Json::Null, 20, Json::Null])), eval(&mut db, key("orders2.discount")));
-        assert_eq!(Ok(json!(["23 garden close", Json::Null, Json::Null, Json::Null, Json::Null])), eval(&mut db, key("orders2.address.line1")));
+        assert_eq!(
+            Ok(json!([0, 1, 2, 3, 4])),
+            eval(&mut db, key("orders2.time"))
+        );
+        assert_eq!(
+            Ok(json!(["james", "ania", "misha", "james", "james"])),
+            eval(&mut db, key("orders2.customer"))
+        );
+        assert_eq!(
+            Ok(json!([2, 2, 4, 10, 1])),
+            eval(&mut db, key("orders2.qty"))
+        );
+        assert_eq!(
+            Ok(json!([9.0, 2.0, 1.0, 16.0, 16.0])),
+            eval(&mut db, key("orders2.price"))
+        );
+        assert_eq!(
+            Ok(json!([10, Json::Null, Json::Null, 20, Json::Null])),
+            eval(&mut db, key("orders2.discount"))
+        );
+        assert_eq!(
+            Ok(json!([
+                "23 garden close",
+                Json::Null,
+                Json::Null,
+                Json::Null,
+                Json::Null
+            ])),
+            eval(&mut db, key("orders2.address.line1"))
+        );
     }
 
     #[test]
     fn eval_cmds() {
         let mut db = InMemDb::new();
         assert_eq!(Ok(json!(true)), eval(&mut db, key("b")));
-        assert_eq!(
-            eval(&mut db, key("ia")),
-            Ok(json!([
-                1,
-                2,
-                3,
-                4,
-                5,
-            ]))
-        );
+        assert_eq!(eval(&mut db, key("ia")), Ok(json!([1, 2, 3, 4, 5,])));
         assert_eq!(eval(&mut db, key("i")), Ok(json!(2)));
         assert_eq!(eval(&mut db, key("f")), Ok(json!(3.3)));
         assert_eq!(
             eval(&mut db, key("fa")),
-            Ok(json!([
-                1.1,
-                2.2,
-                3.3,
-                4.4,
-                5.5,
-            ]))
+            Ok(json!([1.1, 2.2, 3.3, 4.4, 5.5,]))
         );
         assert_eq!(eval(&mut db, key("f")), Ok(Json::from(3.3)));
         assert_eq!(eval(&mut db, key("s")), Ok(Json::from("hello")));
-        assert_eq!(
-            eval(&mut db, key("sa")),
-            Ok(json!([
-                "a",
-                "b",
-                "c",
-                "d",
-            ]))
-        );
+        assert_eq!(eval(&mut db, key("sa")), Ok(json!(["a", "b", "c", "d",])));
     }
 
     #[test]
@@ -936,22 +866,13 @@ mod tests {
         let mut db = InMemDb::new();
         assert_eq!(Ok(json!(true)), eval(&mut db, key("b")));
         assert_eq!(Ok(json!(true)), eval(&mut db, key("b")));
-        assert_eq!(
-            Ok(json!([1, 2, 3, 4, 5])),
-            eval(&mut db, key("ia"))
-        );
+        assert_eq!(Ok(json!([1, 2, 3, 4, 5])), eval(&mut db, key("ia")));
         assert_eq!(Ok(json!(2)), eval(&mut db, key("i")));
     }
 
     #[test]
     fn eval_set_get_ok() {
-        let vec = json!([
-            1,
-            2,
-            3,
-            4,
-            5,
-        ]);
+        let vec = json!([1, 2, 3, 4, 5,]);
         let v = Json::from(vec.clone());
         let mut db = test_db();
         assert_eq!(Ok(Json::Null), db.eval(set("nums", Cmd::Json(v.clone()))));
@@ -961,7 +882,10 @@ mod tests {
     #[test]
     fn eval_get_string_err_not_found() {
         let mut db = InMemDb::new();
-        assert_eq!(Err(Error::BadKey("ania".to_string())), eval(&mut db, key("ania")));
+        assert_eq!(
+            Err(Error::BadKey("ania".to_string())),
+            eval(&mut db, key("ania"))
+        );
     }
 
     #[test]
@@ -1651,23 +1575,11 @@ mod tests {
         let mut db = InMemDb::new();
         assert_eq!(Ok(json!(20)), eval(&mut db, mul(key("x"), key("y"))));
         assert_eq!(Ok(json!(16)), eval(&mut db, mul(key("x"), key("x"))));
-        let arr = json!([
-            5,
-            10,
-            15,
-            20,
-            25,
-        ]);
+        let arr = json!([5, 10, 15, 20, 25,]);
         assert_eq!(Ok(arr.clone()), eval(&mut db, mul(key("ia"), key("y"))));
         assert_eq!(Ok(arr), eval(&mut db, mul(key("y"), key("ia"))));
         assert_eq!(
-            Ok(json!([
-                1,
-                4,
-                9,
-                16,
-                25,
-            ])),
+            Ok(json!([1, 4, 9, 16, 25,])),
             eval(&mut db, mul(key("ia"), key("ia")))
         );
         assert_eq!(bad_type(), eval(&mut db, mul(key("s"), key("s"))));
@@ -1794,33 +1706,15 @@ mod tests {
         assert_eq!(Ok(json!(1.0)), eval(&mut db, div(key("x"), key("x"))));
         assert_eq!(Ok(json!(1.0)), eval(&mut db, div(key("y"), key("y"))));
         assert_eq!(
-            Ok(json!([
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-            ])),
+            Ok(json!([1.0, 1.0, 1.0, 1.0, 1.0,])),
             eval(&mut db, div(key("ia"), key("ia")))
         );
         assert_eq!(
-            Ok(json!([
-                0.5,
-                1.0,
-                1.5,
-                2.0,
-                2.5,
-            ])),
+            Ok(json!([0.5, 1.0, 1.5, 2.0, 2.5,])),
             eval(&mut db, div(key("ia"), key("i")))
         );
         assert_eq!(
-            Ok(json!([
-                2.0,
-                1.0,
-                0.6666666666666666,
-                0.5,
-                0.4,
-            ])),
+            Ok(json!([2.0, 1.0, 0.6666666666666666, 0.5, 0.4,])),
             eval(&mut db, div(key("i"), key("ia")))
         );
 

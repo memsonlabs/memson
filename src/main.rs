@@ -14,7 +14,8 @@ pub mod query;
 
 pub const DEFAULT_PORT: &str = "8888";
 
-#[macro_use] extern crate rocket;
+#[macro_use]
+extern crate rocket;
 #[get("/")]
 fn index() -> &'static str {
     "Hello, world!"

@@ -73,9 +73,9 @@ pub enum Cmd {
     #[serde(rename = "in")]
     In(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "ij")]
-    InnerJoin(Box<Cmd>, Box<Cmd>, String, String, String),  
+    InnerJoin(Box<Cmd>, Box<Cmd>, String, String, String),
     #[serde(rename = "oj")]
-    OuterJoin(Box<Cmd>, Box<Cmd>, String, String, String),        
+    OuterJoin(Box<Cmd>, Box<Cmd>, String, String, String),
     #[serde(rename = "insert")]
     Insert(String, Vec<JsonObj>),
     #[serde(rename = "json")]
@@ -397,4 +397,3 @@ fn cmd_parse_map() {
     let exp = Cmd::Map(Box::new(Cmd::Key("k".to_string())), "len".to_string());
     assert_eq!(exp, cmd);
 }
-

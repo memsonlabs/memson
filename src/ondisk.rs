@@ -13,7 +13,7 @@ impl OnDiskDb {
         Ok(OnDiskDb { sled: db })
     }
 
-    pub fn set(&self, key: &str, val: &Json) -> Result<Option<Json  >, Error> {
+    pub fn set(&self, key: &str, val: &Json) -> Result<Option<Json>, Error> {
         let bytes = serde_json::to_vec(val).map_err(|_| Error::Serialize)?;
         let iv: Option<sled::IVec> = self
             .sled
