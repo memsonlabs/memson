@@ -23,6 +23,10 @@ impl Memson {
         let mem_db = InMemDb::load(&disk_db)?;
         Ok(Self { mem_db, disk_db })
     }
+
+    pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
+        self.mem_db.eval(cmd)
+    }
 }
 
 pub struct Query<'a> {
