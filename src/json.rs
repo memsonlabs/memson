@@ -1,7 +1,5 @@
-use crate::err::Error;
-
 use crate::cmd::Range;
-use crate::Res;
+use crate::err::Error;
 use rayon::prelude::*;
 use serde_json::Number;
 pub use serde_json::{json, Map};
@@ -11,6 +9,73 @@ use std::mem;
 pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
+/*
+#[derive(Debug, Serialize, Eq, PartialEq)]
+pub enum JsonVal {
+    Box(Arc<Json>),
+    Val(Json),
+}
+
+impl <'a> JsonVal<'a> {
+    pub fn val<J:Into<Json>>(val: J) -> JsonVal<'a> {
+        Arc::new(val.into())
+    }
+
+    fn as_bool(&self) -> Option<bool> {
+        match self {
+            Arc::new(Json::Bool(val)) => Some(*val),
+            JsonVal::Ref(Json::Bool(val)) => Some(*val),
+            _ => None,
+        }
+    }
+
+    pub fn reff(&'a self) -> &'a Json {
+        match self {
+            Arc::new(ref val) => val,
+            JsonVal::Ref(val) => *val,
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl From<JsonVal<'_>> for Json {
+    fn from(val: JsonVal<'_>) -> Json {
+        match val {
+            Arc::new(val) => val,
+            JsonVal::Ref(val) => val.clone(),
+        }
+    }
+}
+
+impl From<&JsonVal<'_>> for Json {
+    fn from(val: &JsonVal<'_>) -> Json {
+        match val {
+            Arc::new(val) => val.clone(),
+            JsonVal::Ref(val) => (*val).clone(),
+            JsonVal::Slice(s) => Json::from(s.to_owned()),
+        }
+    }
+}
+
+
+impl AsRef<Json> for JsonVal<'_> {
+    fn as_ref(&self) -> &Json {
+        match self {
+            JsonVal::Ref(v) => v,
+            Arc::new(v) => v,
+        }
+    }
+}
+
+impl AsMut<Json> for JsonVal<'_> {
+    fn as_mut(&mut self) -> &mut Json {
+        match self {
+            JsonVal::Ref(_) => unimplemented!(),
+            Arc::new(v) => v,
+            JsonVal::Slice(_) => unimplemented!(),
+        }
+    }
+} */
 
 // wrapper around json_count to return as a Result
 pub fn count(val: &Json) -> Result<Json, Error> {
@@ -142,13 +207,13 @@ pub fn json_equal(x: &Json, y: &Json) -> bool {
 }
 
 // Vectorised or gate
-fn or_arr(x: &[Json], y: bool) -> Res {
+fn or_arr(x: &[Json], y: bool) -> Result<Json, Error> {
     let r: Result<Vec<Json>, Error> = x.par_iter().map(|x| json_or(x, &Json::Bool(y))).collect();
     r.map(Json::Array)
 }
 
 /// or gate between two json values. Returns back a json value of a boolean.
-pub fn json_or(x: &Json, y: &Json) -> Res {
+pub fn json_or(x: &Json, y: &Json) -> Result<Json, Error> {
     match (x, y) {
         (Json::Bool(x), Json::Bool(y)) => Ok(Json::from(*x || *y)),
         (Json::Bool(val), Json::Array(vec)) | (Json::Array(vec), Json::Bool(val)) => {
@@ -162,7 +227,7 @@ pub fn json_or(x: &Json, y: &Json) -> Res {
 }
 
 /// and gate between two json values. Returns back a json value of a boolean.
-pub fn json_and(x: &Json, y: &Json) -> Res {
+pub fn json_and(x: &Json, y: &Json) -> Result<Json, Error> {
     match (x, y) {
         (Json::Bool(x), Json::Bool(y)) => Ok(Json::from(*x && *y)),
         (x, y) => Err(Error::BadArg(json!([x.clone(), y.clone()]))),
@@ -271,30 +336,34 @@ pub fn json_append(val: &mut Json, elem: Json) {
 
 /// retrieves the first element in the json value.
 //TODO refactor arg from ref to val
-pub fn json_first(val: &Json) -> Json {
+pub fn json_first(val: &Json) -> Option<Json> {
     match val {
-        Json::Array(ref arr) if !arr.is_empty() => arr[0].clone(),
-        Json::String(s) => {
-            let mut it = s.chars();
-            match it.next() {
-                Some(c) => Json::from(c.to_string()),
-                None => Json::Null,
+        Json::Array(ref arr) => {
+            if !arr.is_empty() {
+                Some(arr[0].clone())
+            } else {
+                None
             }
         }
-        val => val.clone(),
+        Json::String(s) => {
+            let mut it = s.chars();
+            it.next().map(|c| Json::from(c.to_string()))
+        }
+        val => Some(val.clone()),
     }
 }
 
 /// retrieves the last element in the json value.
-pub fn json_last(val: &Json) -> Json {
+pub fn json_last(val: &Json) -> Option<&Json> {
     match val {
-        Json::Array(ref arr) if !arr.is_empty() => arr[arr.len() - 1].clone(),
-        Json::String(s) => {
-            let it = s.chars();
-            let last = it.last();
-            last.map(String::from).map(Json::from).unwrap_or(Json::Null)
+        Json::Array(ref arr) => {
+            if arr.is_empty() {
+                return None;
+            }
+            let i = arr.len() - 1;
+            Some(&arr[i])
         }
-        val => val.clone(),
+        val => Some(val),
     }
 }
 
@@ -422,6 +491,7 @@ fn json_bar_num_num(lhs: &Number, rhs: &Number) -> Result<Json, Error> {
 
 /// subtraction of two json values
 pub fn json_sub(lhs: &Json, rhs: &Json) -> Result<Json, Error> {
+    println!("lhs={:?}\nrhs={:?}", lhs, rhs);
     match (lhs, rhs) {
         (Json::Array(lhs), Json::Array(rhs)) => json_sub_arrs(lhs, rhs),
         (Json::Array(lhs), rhs) => json_sub_arr_num(lhs, rhs),
@@ -723,10 +793,8 @@ pub fn json_f64(val: &Json) -> Option<f64> {
         Json::Number(num) => {
             if let Some(x) = num.as_f64() {
                 Some(x)
-            } else if let Some(x) = num.as_i64() {
-                Some(x as f64)
             } else {
-                None
+                num.as_i64().map(|x| x as f64)
             }
         }
         _ => None,
@@ -761,7 +829,7 @@ pub fn json_string(x: &Json) -> Json {
     }
 }
 
-pub fn json_get(key: &str, val: &Json) -> Option<Json> {
+pub fn json_get(key: &str, val: Json) -> Option<Json> {
     match val {
         Json::Array(arr) => {
             if arr.is_empty() {
@@ -779,14 +847,8 @@ pub fn json_get(key: &str, val: &Json) -> Option<Json> {
                 Some(Json::Array(out))
             }
         }
-        Json::Object(obj) => {
-            if let Some(val) = obj.get(key) {
-                Some(val.clone())
-            } else {
-                None
-            }
-        }
-        _ => None,
+        Json::Object(obj) => obj.get(key).cloned(),
+        val => Some(val),
     }
 }
 
@@ -820,24 +882,23 @@ pub fn json_str(val: &Json) -> String {
     }
 }
 
-pub fn json_median(val: &mut Json) -> Result<Json, Error> {
-    match val {
-        Json::Array(ref mut _arr) => todo!("sort the array then "),
-        _ => Err(Error::ExpectedArr),
-    }
+pub fn json_median(_val: &Json) -> Result<Json, Error> {
+    unimplemented!()
 }
 
-fn map(f: &str) -> Option<fn(&Json) -> Res> {
+type F = fn(&Json) -> Result<Json, Error>;
+
+fn map(f: &str) -> Option<F> {
     match f {
-        "avg" => Some(json_avg),
-        "dev" => Some(json_dev),
-        "first" => Some(|x| Ok(json_first(x))),
-        "flat" => Some(|x| Ok(json_flat(x.clone()))), //TODO remove clone
+        "avg" => Some(|x| json_avg(x)),
+        "dev" => Some(|x| json_dev(x)),
+        "first" => Some(|x| Ok(json_first(x).unwrap_or(Json::Null))),
+        "flat" => Some(|x| Ok(json_flat(x))), //TODO remove clone
         "json" => Some(|x| Ok(x.clone())),
-        "last" => Some(|x| Ok(json_last(x))),
+        //"last" => Some(|x| Ok(json_last(x))),
         "len" => Some(|x| Ok(json_count(x))),
-        "max" => Some(|x| Ok(json_max(x).cloned().unwrap_or(Json::Null))),
-        "min" => Some(|x| Ok(json_min(x).cloned().unwrap_or(Json::Null))),
+        //"max" => Some(|x| Ok(wrap(json_max(x)))),
+        //"min" => Some(|x| Ok(wrap(json_min(x)))),
         "sum" => Some(|x| Ok(json_sum(x))),
         "unique" => Some(|x| Ok(json_unique(x))),
         "var" => Some(|x| json_var(x)),
@@ -899,19 +960,19 @@ fn json_arr_merge(val: &Json, out: &mut Vec<Json>) {
     };
 }
 
-pub fn json_flat(val: Json) -> Json {
+pub fn json_flat(val: &Json) -> Json {
     match val {
         Json::Array(arr) => {
-            let mut out = Vec::new();
+            let mut out: Vec<Json> = Vec::new();
             for val in arr {
                 match val {
-                    Json::Array(arr) => out.extend(arr),
-                    val => out.push(val),
+                    Json::Array(arr) => out.extend(arr.clone()),
+                    val => out.push(val.clone()),
                 }
             }
             Json::Array(out)
         }
-        val => val,
+        val => val.clone(),
     }
 }
 
@@ -959,29 +1020,32 @@ pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
             }
             Ok(Json::Array(v))
         }
-        val => f(&val),
+        val => f(val),
     }
 }
 
-fn arr_slice(arr: Vec<Json>, start: Option<usize>, end: Option<usize>) -> Result<Json, Error> {
-    let s = match (start, end) {
-        (Some(s), Some(e)) => {
-            if e > arr.len() || s < arr.len() {
-                return Err(Error::IndexOutOfBounds);
-            } else {
-                arr[s..e].to_vec()
-            }
+fn arr_slice(
+    _arr: Vec<Json>,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<Vec<Json>, Error> {
+    let _s = match (start, end) {
+        (Some(_s), Some(_e)) => {
+            unimplemented!()
         }
-        (Some(s), None) => arr[s..].to_vec(),
-        (None, Some(e)) => arr[..e].to_vec(),
-        (None, None) => arr,
+        (Some(_s), None) => unimplemented!(),
+        (None, Some(_s)) => unimplemented!(),
+        (None, None) => unimplemented!(),
     };
-    Ok(Json::Array(s))
+    //Ok(Json::Array(s))
 }
 
-pub fn json_slice(val: Json, range: Range) -> Res {
+pub fn json_slice(val: Json, range: Range) -> Result<Json, Error> {
     match val {
-        Json::Array(vec) => arr_slice(vec, range.start, range.size),
+        Json::Array(vec) => {
+            let s = arr_slice(vec, range.start, range.size)?;
+            Ok(Json::from(s))
+        }
         _ => Err(Error::ExpectedArr),
     }
 }
@@ -1051,6 +1115,13 @@ fn num_cmp(x: &Number, y: &Number) -> Ordering {
     }
 }
 
+pub fn json_len(val: &Json) -> usize {
+    match val {
+        Json::Array(arr) => arr.len(),
+        _ => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1078,8 +1149,8 @@ mod tests {
     #[test]
     fn json_get_arr_obj() {
         let obj = json!({"name":"anna", "age": 28});
-        assert_eq!(Some(Json::from("anna")), json_get("name", &obj));
-        assert_eq!(Some(Json::from(28)), json_get("age", &obj));
+        assert_eq!(Some(Json::from("anna")), json_get("name", obj.clone()));
+        assert_eq!(Some(Json::from(28)), json_get("age", obj));
     }
 
     #[test]

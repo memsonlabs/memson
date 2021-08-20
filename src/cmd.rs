@@ -55,7 +55,7 @@ pub enum Cmd {
     #[serde(rename = "dev")]
     Dev(Box<Cmd>),
     #[serde(rename = "eval")]
-    Eval(Vec<Cmd>),
+    Eval(Box<Cmd>),
     #[serde(rename = "==")]
     Eq(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "first")]
@@ -72,6 +72,10 @@ pub enum Cmd {
     Has(String),
     #[serde(rename = "in")]
     In(Box<Cmd>, Box<Cmd>),
+    #[serde(rename = "ij")]
+    InnerJoin(Box<Cmd>, Box<Cmd>, String, String, String),
+    #[serde(rename = "oj")]
+    OuterJoin(Box<Cmd>, Box<Cmd>, String, String, String),
     #[serde(rename = "insert")]
     Insert(String, Vec<JsonObj>),
     #[serde(rename = "json")]
