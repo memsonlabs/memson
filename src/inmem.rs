@@ -930,7 +930,7 @@ mod tests {
 
     #[test]
     fn select_all_query() {
-        let qry = query(json!({"from": {"key": "t"}}));
+        let qry = query(json!({"from":  "t"}));
         assert_eq!(Ok(table_data()), qry);
     }
 
