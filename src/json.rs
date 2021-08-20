@@ -1005,8 +1005,6 @@ pub fn json_numsort(val: Json, descend: bool) -> Json {
 }
 
 pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
-    unimplemented!()
-    /*
     let f = map(&f).ok_or(Error::BadCmd)?;
     match val {
         Json::Array(arr) => {
@@ -1018,7 +1016,6 @@ pub fn json_map(val: &Json, f: String) -> Result<Json, Error> {
         }
         val => f(&val),
     }
-    */
 }
 
 fn arr_slice(arr: &[Json], start: Option<usize>, end: Option<usize>) -> Result<&[Json], Error> {

@@ -978,9 +978,9 @@ mod tests {
     }
 
     fn query(json: Json) -> Result<Json, Error> {
-        let cmd = serde_json::from_value(json).unwrap();
+        let qry_cmd = serde_json::from_value(json).unwrap();
         let db = test_db();
-        let qry = Query::from(&db, cmd);
+        let qry = Query::from(&db, qry_cmd);
         qry.exec()
     }
 

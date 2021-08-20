@@ -263,6 +263,6 @@ mod tests {
             {"customer": {"surname": "perry"}},
             {"foo": {"bar": "baz"}},
         ]});
-        assert_eq!(Some(json!(["alice", "bob", "charles", "dave", "ewa", Json::Null, Json::Null])), eval_nested_key(val, &["orders.customer.name"]));
+        assert_eq!(Some(json!(["alice", "bob", "charles", "dave", "ewa", Json::Null, Json::Null])), eval_nested_key(val, &["orders", "customer", "name"]));
     }
 }

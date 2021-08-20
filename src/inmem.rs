@@ -1,3 +1,4 @@
+use crate::apply::apply;
 use crate::json::*;
 use crate::eval::*;
 use crate::cmd::{Cmd, QueryCmd, Range};
@@ -93,9 +94,8 @@ impl InMemDb {
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
         match cmd {
             Cmd::Apply(lhs, rhs) => {
-                unimplemented!()
-                /* let val = eval_cmd(db, *rhs)?;
-                apply(*lhs, val.as_ref()) */
+                let val = self.eval(*rhs)?;
+                apply(*lhs, &val)
             }
             Cmd::Add(lhs, rhs) => {
                 eval_bin_fn(self, *lhs, *rhs, &|x,y| json_add(x,y ))
@@ -155,7 +155,8 @@ impl InMemDb {
             Cmd::ToString(arg) => Ok(self.eval(*arg)?),
             Cmd::Key(key) => {
                 let keys: Vec<&str> = key.split('.').collect();
-                Ok(eval_keys(self, &keys).unwrap_or(Json::Null))
+                let val = self.get(&keys[0]).map(|x| x.clone())?;
+                Ok(eval_nested_key(val, &keys[1..]).unwrap_or(Json::Null))
             }
             Cmd::Reverse(arg) => eval_reverse(self, *arg),
             Cmd::Median(arg) => eval_median(self, *arg),
@@ -929,7 +930,7 @@ mod tests {
 
     #[test]
     fn select_all_query() {
-        let qry = query(json!({"from": "t"}));
+        let qry = query(json!({"from": {"key": "t"}}));
         assert_eq!(Ok(table_data()), qry);
     }
 
