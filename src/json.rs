@@ -1122,6 +1122,30 @@ pub fn json_len(val: &Json) -> usize {
     }
 }
 
+pub fn json_innerjoin(lhs: &[Json], lhs_key: &str, rhs: &[Json], rhs_key: &str, key: &str) -> Json {
+    let mut out: Vec<Json> = Vec::new();
+    for lhs_val in lhs {
+        if !lhs_val.is_object() {
+            continue;
+        }
+        if let Some(lv) = lhs_val.get(lhs_key) {
+            for rhs_val in rhs {
+                if !rhs_val.is_object() {
+                    continue;
+                }
+                if let Some(rv) = rhs_val.get(rhs_key) {
+                    if lv == rv {
+                        let mut lhs_obj = lhs_val.as_object().unwrap().clone();
+                        lhs_obj.insert(key.to_string(), rhs_val.clone());
+                        out.push(Json::from(lhs_obj));
+                    }
+                }
+            }
+        }
+    }
+    Json::from(out)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1194,4 +1218,16 @@ mod tests {
         json_sort(&mut val, false);
         assert_eq!(json!(['1', 1, 10, 3, 4, 5, 6, 7, 8, 9]), val);
     }
+
+    #[test]
+    fn test_json_innerjoin() {
+        let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
+        let rhs = json!([{"b": 1}, {"b": 2}, {"b": 3}, {"b": 4}]);
+        assert_eq!(json!([
+            {"a": 1, "c": {"b": 1}},
+            {"a": 2, "c": {"b": 2}},
+            {"a": 3, "c": {"b": 3}},
+            {"a": 4, "c": {"b": 4}}
+        ]), json_innerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c"));
+    }    
 }

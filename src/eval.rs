@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_eval_nested_key() {
-        let it = "address.line1".split('.');
+        let _it = "address.line1".split('.');
         let val = json!({"a": 1});
         assert_eq!(None, eval_nested_key(val, &["b"]));
 
