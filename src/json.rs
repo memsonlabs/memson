@@ -1266,7 +1266,11 @@ mod tests {
 
         let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
         let rhs = json!([{"b": 6}, {"b": 7}, {"b": 8}, {"b": 9}]);
-        assert_eq!(json!([]), json_innerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c"));        
+        assert_eq!(json!([]), json_innerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c")); 
+        
+        let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
+        let rhs = json!([]);
+        assert_eq!(json!([]), json_innerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c")); 
     } 
     
     #[test]
