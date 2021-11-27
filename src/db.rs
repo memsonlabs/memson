@@ -13,19 +13,28 @@ use std::path::Path;
 pub(crate) const PAGE_SIZE: usize = 50;
 
 pub struct Memson {
-    pub mem_db: InMemDb,
+    pub inmem_db: InMemDb,
     pub disk_db: OnDiskDb,
 }
 
 impl Memson {
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub fn open<P:AsRef<Path>>(path: P) -> Result<Self, Error> {
         let disk_db = OnDiskDb::open(path)?;
-        let mem_db = InMemDb::load(&disk_db)?;
-        Ok(Self { mem_db, disk_db })
+        let inmem_db = InMemDb::load(&disk_db)?;
+        Ok(Self { inmem_db, disk_db })
     }
 
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
-        self.mem_db.eval(cmd)
+        match cmd {
+            Cmd::Set(key, val) => self.set(key, *val),
+            cmd => self.inmem_db.eval(cmd)
+        }        
+    }
+
+    fn set(&mut self, key: String, cmd: Cmd) -> Result<Json, Error> {
+        let val = self.inmem_db.eval(cmd)?;
+        self.disk_db.set(&key, &val)?;
+        Ok(self.inmem_db.set(key, val).unwrap_or(Json::Null))
     }
 }
 
@@ -232,6 +241,7 @@ mod tests {
     use assert_approx_eq::assert_approx_eq;
 
     use serde_json::json;
+    use std::fs;
 
     fn set<K: Into<String>>(key: K, arg: Cmd) -> Cmd {
         Cmd::Set(key.into(), Box::new(arg))
@@ -353,6 +363,7 @@ mod tests {
         }
         let mut memson = Memson::open(path).unwrap();
         assert_eq!(Ok(data), memson.eval(Cmd::Key("customers".to_string())));
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
@@ -1710,5 +1721,20 @@ mod tests {
         assert_eq!(bad_type(), eval(&mut db, div(key("s"), key("sa"))));
         assert_eq!(bad_type(), eval(&mut db, div(key("i"), key("s"))));
         assert_eq!(bad_type(), eval(&mut db, div(key("s"), key("i"))));
+    }
+
+    #[test]
+    fn test_persistence() {
+        let path = "memson";
+        let (key, val) = ("a", json!([1,2,3,4,5]));
+        {
+            let mut db = Memson::open(path).unwrap();
+            db.eval(Cmd::Set(key.to_string(), Box::new(Cmd::Json(val.clone())))).unwrap();
+        }
+        {
+            let mut db = Memson::open(path).unwrap();
+            assert_eq!(val, db.eval(Cmd::Key(key.to_string())).unwrap());
+        }
+        fs::remove_dir_all(path).unwrap();
     }
 }

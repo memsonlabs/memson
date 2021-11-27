@@ -211,6 +211,24 @@ pub fn eval_rows_cmd(cmd: Cmd, rows: &Json) -> Option<Json> {
     apply(cmd, rows).ok()
 }
 
+pub fn eval_ij(db: &mut InMemDb, lhs: Cmd, lhs_key: &str, rhs: Cmd, rhs_key: &str, key: &str) -> Result<Json, Error> {
+    let lv = db.eval(lhs)?;
+    let rv = db.eval(rhs)?;
+    match (lv.as_array(), rv.as_array()) {
+        (Some(l), Some(r)) => Ok(json_innerjoin(l, lhs_key, r, rhs_key, key)),
+        _ => Err(Error::BadType)
+    } 
+}
+
+pub fn eval_oj(db: &mut InMemDb, lhs: Cmd, lhs_key: &str, rhs: Cmd, rhs_key: &str, key: &str) -> Result<Json, Error> {
+    let lv = db.eval(lhs)?;
+    let rv = db.eval(rhs)?;
+    match (lv.as_array(), rv.as_array()) {
+        (Some(l), Some(r)) => Ok(json_outerjoin(l, lhs_key, r, rhs_key, key)),
+        _ => Err(Error::BadType)
+    }    
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,4 +292,24 @@ mod tests {
             eval_nested_key(val, &["orders", "customer", "name"])
         );
     }
+
+    #[test]
+    fn test_eval_ij() {
+        let mut db = InMemDb::new();
+        db.set("a", json!([{"a": 1}, {"a": 2}, {"a": 3}]));
+        db.set("b", json!([{"b": 1}, {"b": 2}]));
+        let lhs = Cmd::Key("a".to_string());
+        let rhs = Cmd::Key("b".to_string());
+        assert_eq!(Ok(json!([{"a": 1, "c": {"b": 1}}, {"a": 2, "c": {"b": 2}}])), eval_ij(&mut db, lhs, "a", rhs, "b", "c"));
+    }
+
+    #[test]
+    fn test_eval_oj() {
+        let mut db = InMemDb::new();
+        db.set("a", json!([{"a": 1}, {"a": 2}, {"a": 3}]));
+        db.set("b", json!([{"b": 1}, {"b": 2}]));
+        let lhs = Cmd::Key("a".to_string());
+        let rhs = Cmd::Key("b".to_string());
+        assert_eq!(Ok(json!([{"a": 1, "c": {"b": 1}}, {"a": 2, "c": {"b": 2}}, {"a": 3}])), eval_oj(&mut db, lhs, "a", rhs, "b", "c"));
+    }    
 }
