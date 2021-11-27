@@ -1,12 +1,11 @@
-use crate::apply::apply;
-use crate::cmd::{Cmd, QueryCmd, Range};
-use crate::db::{Query, PAGE_SIZE};
+use crate::cmd::{Cmd, Range};
 use crate::err::Error;
-use crate::eval::*;
 use crate::json::*;
 use crate::ondisk::{ivec_to_json, OnDiskDb};
 use serde_json::json;
 use std::collections::BTreeMap;
+
+pub(crate) const PAGE_SIZE: usize = 50;
 
 pub type Cache = BTreeMap<String, Json>;
 
@@ -95,10 +94,6 @@ impl InMemDb {
     /// evaluate a command
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
         match cmd {
-            Cmd::Apply(lhs, rhs) => {
-                let val = self.eval(*rhs)?;
-                apply(*lhs, &val)
-            }
             Cmd::Add(lhs, rhs) => eval_bin_fn(self, *lhs, *rhs, &|x, y| json_add(x, y)),
             Cmd::Append(key, arg) => eval_append(self, &key, *arg),
             Cmd::Avg(arg) => self.eval_unr_fn(*arg, &|x| json_avg(x)),
@@ -131,7 +126,6 @@ impl InMemDb {
                 //Ok(val.unwrap_or(Json::Null))
                 unimplemented!()
             }
-            Cmd::Query(cmd) => eval_query(self, cmd),
             Cmd::Set(key, arg) => {
                 let val = self.eval(*arg)?;
                 if let Some(val) = self.set(key, val) {
@@ -179,6 +173,7 @@ impl InMemDb {
             Cmd::Has(key) => Ok(Json::Bool(self.has(&key))),
             Cmd::InnerJoin(_lhs, _rhs, _left_key, _right_key, _prop_key) => unimplemented!(),
             Cmd::OuterJoin(_lhs, _rhs, _left_key, _right_key, _prop_key) => unimplemented!(),
+            Cmd::Upsert(key, arg) => eval_upsert(self, key, *arg),
         }
     }
 
@@ -213,12 +208,6 @@ impl InMemDb {
             .map(|x| Json::String(x.to_string()))
             .collect();
         json!({"no_entries": no_entries, "keys": keys})
-    }
-
-    /// execute query
-    pub fn query(&self, cmd: QueryCmd) -> Result<Json, Error> {
-        let qry = Query::from(self, cmd);
-        qry.exec()
     }
 }
 
@@ -331,12 +320,13 @@ mod tests {
         db.set("y", json!(5));
         db.set("s", json!("hello"));
         db.set("sa", json!(["a", "b", "c", "d"]));
-        db.set("t", table_data());
+        //db.set("t", table_data());
         db.set("n", Json::Null);
         db.set("orders", orders_val());
         db.set("cmd", json!({"+": [{"key": "x"}, {"key": "y"}]}));
     }
 
+    /*
     #[test]
     fn select_all_from_orders() {
         let exp = json!([
@@ -543,7 +533,9 @@ mod tests {
             Ok(exp)
         );
     }
+    */
 
+    /*
     #[test]
     fn select_order_volume_by_customer_from_orders() {
         let exp = json!({
@@ -562,26 +554,27 @@ mod tests {
             Ok(exp)
         );
     }
-
-    #[test]
-    fn select_order_value_by_customer_from_orders() {
-        let exp = json!({
-                "james":{ "orderVal": [18.0, 160.0, 16.0] },
-                "ania": { "orderVal": [4.0] },
-                "misha": { "orderVal": [4.0] },
-        });
-        assert_eq!(
-            query(json!({
-                "select": {
-                    "orderVal":{"*": [{"key":"qty"},{"key":"price"}]},
-                },
-                "by": {"key":"customer"},
-                "from": "orders"
-            })),
-            Ok(exp)
-        );
-    }
-
+    */
+    /*
+       #[test]
+       fn select_order_value_by_customer_from_orders() {
+           let exp = json!({
+                   "james":{ "orderVal": [18.0, 160.0, 16.0] },
+                   "ania": { "orderVal": [4.0] },
+                   "misha": { "orderVal": [4.0] },
+           });
+           assert_eq!(
+               query(json!({
+                   "select": {
+                       "orderVal":{"*": [{"key":"qty"},{"key":"price"}]},
+                   },
+                   "by": {"key":"customer"},
+                   "from": "orders"
+               })),
+               Ok(exp)
+           );
+       }
+    */
     #[test]
     fn test_first() {
         let mut db = test_db();
@@ -832,8 +825,12 @@ mod tests {
     #[test]
     fn nested_get() {
         let mut db = test_db();
-        let act = eval_cmd(&mut db, get("name", key("t"))).unwrap();
-        assert_eq!(json!(["james", "ania", "misha", "ania",]), act);
+        db.set(
+            "order",
+            json!({"address": {"line1": "street 1", "line2": "street 2"}}),
+        );
+        let act = eval_cmd(&mut db, get("name", key("order.address.line1"))).unwrap();
+        assert_eq!(json!("street 1"), act);
     }
 
     fn test_db() -> InMemDb {
@@ -841,402 +838,402 @@ mod tests {
         insert_data(&mut db);
         db
     }
+    /*
+        #[test]
+        fn select_all_query() {
+            let qry = query(json!({"from":  "t"}));
+            assert_eq!(Ok(table_data()), qry);
+        }
 
-    fn query(json: Json) -> Result<Json, Error> {
-        let cmd = serde_json::from_value(json).unwrap();
-        let db = test_db();
-        let qry = Query::from(&db, cmd);
-        qry.exec()
-    }
-
-    #[test]
-    fn select_all_query() {
-        let qry = query(json!({"from":  "t"}));
-        assert_eq!(Ok(table_data()), qry);
-    }
-
-    fn table_data() -> Json {
-        json!([
-            {"name": "james", "age": 35},
-            {"name": "ania", "age": 28, "job": "english teacher"},
-            {"name": "misha", "age": 10},
-            {"name": "ania", "age": 20},
-        ])
-    }
-
-    #[test]
-    fn select_1_prop_query() {
-        let qry = query(json!({"select": {"name": {"key": "name"}}, "from": "t"}));
-        let val = json!({"name": ["james", "ania", "misha", "ania"]});
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_3_prop_query() {
-        let qry = query(json!({
-            "select": {
-                "name": {"key": "name"},
-                "age": {"key": "age"},
-                "job": {"key": "job"}
-            },
-            "from": "t"
-        }));
-        let val = json!({
-            "name": ["james", "ania", "misha", "ania"],
-            "age": [35, 28, 10, 20],
-            "job": ["english teacher"],
-        });
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_all_where_eq_query() {
-        let qry = query(json!({"from": "t", "where": {"==": [{"key": "name"}, "james"]}}));
-        let val = json!([{"name": "james", "age": 35}]);
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_all_where_neq_query_ok() {
-        let qry = query(json!({"from": "t", "where": {"!=": [{"key":"name"}, "james"]}}));
-        let val = json!([
-            {"name": "ania", "age": 28, "job": "english teacher"},
-            {"name": "misha", "age": 10},
-            {"name": "ania", "age": 20},
-        ]);
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_all_where_gt_query_ok() {
-        let qry = query(json!({"from": "t", "where": {">": [{"key": "age"}, 20]}}));
-        let val = json!([
-            {"name": "james", "age": 35},
-            {"name": "ania", "age": 28, "job": "english teacher"},
-        ]);
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_all_where_lt_query_ok() {
-        let qry = query(json!({"from": "t", "where": {"<": [{"key": "age"}, 20]}}));
-        let val = json!([{"name": "misha", "age": 10}]);
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_all_where_lte_query_ok() {
-        let qry = query(json!({"from": "t", "where": {"<=": [{"key": "age"}, 28]}}));
-        let val = json!([
-            {"name": "ania", "age": 28, "job": "english teacher"},
-            {"name": "misha", "age": 10},
-            {"name": "ania", "age": 20},
-        ]);
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_all_where_gte_query_ok() {
-        let qry = query(json!({"from": "t", "where": {">=": [{"key":"age"}, 28]}}));
-        let val = json!([
-            {"name": "james", "age": 35},
-            {"name": "ania", "age": 28, "job": "english teacher"}
-        ]);
-
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_all_where_and_gate_ok() {
-        let qry = query(json!({
-            "from": "t",
-            "where": {"&&": [
-                {">": [{"key": "age"}, 20]},
-                {"==": [{"key":"name"}, "ania"]}
-            ]}
-        }));
-        let val = json!([{"name": "ania", "age": 28, "job": "english teacher"}]);
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_sum_ok() {
-        let qry = query(json!({
-            "select": {"totalAge": {"sum": {"key": "age"}}},
-            "from": "t"
-        }));
-        let val = json!({"totalAge": 93});
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_max_num_ok() {
-        let qry = query(json!({
-            "select": {
-                "maxAge": {"max": {"key": "age"}}
-            },
-            "from": "t"
-        }));
-        let val = json!({"maxAge": 35});
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_max_str_ok() {
-        let qry = query(json!({
-            "select": {
-                "maxName": {"max":  {"key": "name"}}
-            },
-            "from": "t"
-        }));
-        let val = json!({"maxName": "misha"});
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_min_num_ok() {
-        let qry = query(json!({
-            "select": {
-                "minAge": {"min": {"key": "age"}}
-            },
-            "from": "t"
-        }));
-        let val = json!({"minAge": 10});
-        assert_eq!(Ok(val), qry);
-    }
-
-    #[test]
-    fn select_avg_num_ok() {
-        let qry = query(json!({
-            "select": {
-                "avgAge": {"avg": {"key": "age"}}
-            },
-            "from": "t"
-        }));
-        assert_eq!(Ok(json!({"avgAge": 23.25})), qry);
-    }
-
-    #[test]
-    fn select_first_ok() {
-        let qry = query(json!({
-            "select": {
-                "firstAge": {"first": {"key": "age"}}
-            },
-            "from": "t"
-        }));
-        assert_eq!(Ok(json!({"firstAge": 35})), qry);
-    }
-
-    #[test]
-    fn select_last_ok() {
-        let qry = query(json!({
-            "select": {
-                "lastAge": {"last": {"key": "age"}}
-            },
-            "from": "t"
-        }));
-        assert_eq!(Ok(json!({"lastAge": 20})), qry);
-    }
-
-    #[test]
-    fn select_var_num_ok() {
-        let qry = query(json!({
-            "select": {
-                "varAge": {"var": {"key": "age"}}
-            },
-            "from": "t"
-        }));
-        assert_eq!(Ok(json!({"varAge": 146.75})), qry);
-    }
-
-    #[test]
-    fn select_dev_num_ok() {
-        let qry = query(json!({
-            "select": {
-                "devAge": {"dev": {"key": "age"}}
-            },
-            "from": "t"
-        }));
-        assert_eq!(Ok(json!({"devAge": 9.310612224768036})), qry);
-    }
-
-    #[test]
-    fn select_max_age_where_age_gt_20() {
-        let qry = query(json!({
-            "select": {
-                "maxAge": {"max": {"key": "age"}}
-            },
-            "from": "t",
-            "where": {">": [{"key":"age"}, 20]}
-        }));
-        assert_eq!(Ok(json!({"maxAge": 35})), qry);
-    }
-
-    #[test]
-    fn select_get_age_where_age_gt_20() {
-        let qry = query(json!({
-            "select": {
-                "age": {"key": "age"}
-            },
-            "from": "t",
-            "where": {">": [{"key":"age"}, 20]}
-        }));
-        assert_eq!(Ok(json!({"age":[35, 28]})), qry);
-    }
-
-    #[test]
-    fn select_min_age_where_age_gt_20() {
-        let qry = query(json!({
-            "select": {
-                "minAge": {"min":  {"key": "age"}}
-            },
-            "from": "t",
-            "where": {">": [{"key":"age"}, 20]}
-        }));
-        assert_eq!(Ok(json!({"minAge": 28})), qry);
-    }
-
-    #[test]
-    fn select_min_max_age_where_age_gt_20() {
-        let qry = query(json!({
-            "select": {
-                "youngestAge": {"min": {"key": "age"}},
-                "oldestAge": {"max": {"key": "age"}},
-            },
-            "from": "t",
-            "where": {">": [{"key":"age"}, 20]}
-        }));
-        assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry);
-    }
-
-    #[test]
-    fn select_empty_obj() {
-        let qry = query(json!({
-            "select": {},
-            "from": "t",
-        }));
-        assert_eq!(
-            Ok(json!([
+        fn table_data() -> Json {
+            json!([
                 {"name": "james", "age": 35},
                 {"name": "ania", "age": 28, "job": "english teacher"},
                 {"name": "misha", "age": 10},
                 {"name": "ania", "age": 20},
-            ])),
-            qry
-        );
-    }
+            ])
+        }
 
-    #[test]
-    fn select_empty_obj_where_age_gt_20() {
-        let qry = query(json!({
-            "select": {},
-            "from": "t",
-            "where": {">": [{"key":"age"}, 20]}
-        }));
-        assert_eq!(
-            Ok(json!([
+        #[test]
+        fn select_1_prop_query() {
+            let qry = query(json!({"select": {"name": {"key": "name"}}, "from": "t"}));
+            let val = json!({"name": ["james", "ania", "misha", "ania"]});
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_3_prop_query() {
+            let qry = query(json!({
+                "select": {
+                    "name": {"key": "name"},
+                    "age": {"key": "age"},
+                    "job": {"key": "job"}
+                },
+                "from": "t"
+            }));
+            let val = json!({
+                "name": ["james", "ania", "misha", "ania"],
+                "age": [35, 28, 10, 20],
+                "job": ["english teacher"],
+            });
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_all_where_eq_query() {
+            let qry = query(json!({"from": "t", "where": {"==": [{"key": "name"}, "james"]}}));
+            let val = json!([{"name": "james", "age": 35}]);
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_all_where_neq_query_ok() {
+            let qry = query(json!({"from": "t", "where": {"!=": [{"key":"name"}, "james"]}}));
+            let val = json!([
+                {"name": "ania", "age": 28, "job": "english teacher"},
+                {"name": "misha", "age": 10},
+                {"name": "ania", "age": 20},
+            ]);
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_all_where_gt_query_ok() {
+            let qry = query(json!({"from": "t", "where": {">": [{"key": "age"}, 20]}}));
+            let val = json!([
                 {"name": "james", "age": 35},
                 {"name": "ania", "age": 28, "job": "english teacher"},
-            ])),
-            qry
-        );
-    }
+            ]);
+            assert_eq!(Ok(val), qry);
+        }
 
-    #[test]
-    fn select_age_by_name() {
-        let qry = query(json!({
-            "select": {
-                "age": {"key": "age"},
-            },
-            "from": "t",
-            "by": {"key": "name"},
-        }));
-        assert_eq!(
-            Ok(json!({
-                "misha": {"age": [10]},
-                "ania": {"age": [28, 20]},
-                "james": {"age":[35]},
-            })),
-            qry
-        );
-    }
+        #[test]
+        fn select_all_where_lt_query_ok() {
+            let qry = query(json!({"from": "t", "where": {"<": [{"key": "age"}, 20]}}));
+            let val = json!([{"name": "misha", "age": 10}]);
+            assert_eq!(Ok(val), qry);
+        }
 
-    #[test]
-    fn select_first_age_by_name() {
-        let qry = query(json!({
-            "select": {
-                "age": {"first": {"key": "age"}},
-            },
-            "from": "t",
-            "by": {"key": "name"},
-        }));
-        assert_eq!(
-            Ok(json!({
-                "misha": {"age": 10},
-                "ania": {"age": 28},
-                "james": {"age": 35},
-            })),
-            qry
-        );
-    }
+        #[test]
+        fn select_all_where_lte_query_ok() {
+            let qry = query(json!({"from": "t", "where": {"<=": [{"key": "age"}, 28]}}));
+            let val = json!([
+                {"name": "ania", "age": 28, "job": "english teacher"},
+                {"name": "misha", "age": 10},
+                {"name": "ania", "age": 20},
+            ]);
+            assert_eq!(Ok(val), qry);
+        }
 
-    #[test]
-    fn select_last_age_by_name() {
-        let qry = query(json!({
-            "select": {
-                "age": {"last": {"key":"age"}},
-            },
-            "from": "t",
-            "by": {"key": "name"},
-        }));
-        assert_eq!(
-            Ok(json!({
-                "misha":{"age": 10},
-                "ania":{"age": 20},
-                "james":{"age": 35},
-            })),
-            qry
-        );
-    }
+        #[test]
+        fn select_all_where_gte_query_ok() {
+            let qry = query(json!({"from": "t", "where": {">=": [{"key":"age"}, 28]}}));
+            let val = json!([
+                {"name": "james", "age": 35},
+                {"name": "ania", "age": 28, "job": "english teacher"}
+            ]);
 
-    #[test]
-    fn select_count_age_by_name() {
-        let qry = query(json!({
-            "select": {
-                "age": {"len": {"key": "age"}},
-            },
-            "from": "t",
-            "by": {"key": "name"},
-        }));
-        assert_eq!(
-            Ok(json!({
-                "misha": {"age": 1},
-                "ania": {"age": 2},
-                "james": {"age": 1},
-            })),
-            qry
-        );
-    }
+            assert_eq!(Ok(val), qry);
+        }
 
-    #[test]
-    fn select_min_age_by_name() {
-        let qry = query(json!({
-            "select": {
-                "age": {"min": {"key": "age"}},
-            },
-            "from": "t",
-            "by": {"key":"name"},
-        }));
-        assert_eq!(
-            Ok(json!({
-                "misha":{"age": 10},
-                "ania":{"age": 20},
-                "james":{"age": 35},
-            })),
-            qry
-        );
-    }
+        #[test]
+        fn select_all_where_and_gate_ok() {
+            let qry = query(json!({
+                "from": "t",
+                "where": {"&&": [
+                    {">": [{"key": "age"}, 20]},
+                    {"==": [{"key":"name"}, "ania"]}
+                ]}
+            }));
+            let val = json!([{"name": "ania", "age": 28, "job": "english teacher"}]);
+            assert_eq!(Ok(val), qry);
+        }
 
+        #[test]
+        fn select_sum_ok() {
+            let qry = query(json!({
+                "select": {"totalAge": {"sum": {"key": "age"}}},
+                "from": "t"
+            }));
+            let val = json!({"totalAge": 93});
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_max_num_ok() {
+            let qry = query(json!({
+                "select": {
+                    "maxAge": {"max": {"key": "age"}}
+                },
+                "from": "t"
+            }));
+            let val = json!({"maxAge": 35});
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_max_str_ok() {
+            let qry = query(json!({
+                "select": {
+                    "maxName": {"max":  {"key": "name"}}
+                },
+                "from": "t"
+            }));
+            let val = json!({"maxName": "misha"});
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_min_num_ok() {
+            let qry = query(json!({
+                "select": {
+                    "minAge": {"min": {"key": "age"}}
+                },
+                "from": "t"
+            }));
+            let val = json!({"minAge": 10});
+            assert_eq!(Ok(val), qry);
+        }
+
+        #[test]
+        fn select_avg_num_ok() {
+            let qry = query(json!({
+                "select": {
+                    "avgAge": {"avg": {"key": "age"}}
+                },
+                "from": "t"
+            }));
+            assert_eq!(Ok(json!({"avgAge": 23.25})), qry);
+        }
+
+        #[test]
+        fn select_first_ok() {
+            let qry = query(json!({
+                "select": {
+                    "firstAge": {"first": {"key": "age"}}
+                },
+                "from": "t"
+            }));
+            assert_eq!(Ok(json!({"firstAge": 35})), qry);
+        }
+
+        #[test]
+        fn select_last_ok() {
+            let qry = query(json!({
+                "select": {
+                    "lastAge": {"last": {"key": "age"}}
+                },
+                "from": "t"
+            }));
+            assert_eq!(Ok(json!({"lastAge": 20})), qry);
+        }
+
+        #[test]
+        fn select_var_num_ok() {
+            let qry = query(json!({
+                "select": {
+                    "varAge": {"var": {"key": "age"}}
+                },
+                "from": "t"
+            }));
+            assert_eq!(Ok(json!({"varAge": 146.75})), qry);
+        }
+
+        #[test]
+        fn select_dev_num_ok() {
+            let qry = query(json!({
+                "select": {
+                    "devAge": {"dev": {"key": "age"}}
+                },
+                "from": "t"
+            }));
+            assert_eq!(Ok(json!({"devAge": 9.310612224768036})), qry);
+        }
+
+        #[test]
+        fn select_max_age_where_age_gt_20() {
+            let qry = query(json!({
+                "select": {
+                    "maxAge": {"max": {"key": "age"}}
+                },
+                "from": "t",
+                "where": {">": [{"key":"age"}, 20]}
+            }));
+            assert_eq!(Ok(json!({"maxAge": 35})), qry);
+        }
+
+        #[test]
+        fn select_get_age_where_age_gt_20() {
+            let qry = query(json!({
+                "select": {
+                    "age": {"key": "age"}
+                },
+                "from": "t",
+                "where": {">": [{"key":"age"}, 20]}
+            }));
+            assert_eq!(Ok(json!({"age":[35, 28]})), qry);
+        }
+
+        #[test]
+        fn select_min_age_where_age_gt_20() {
+            let qry = query(json!({
+                "select": {
+                    "minAge": {"min":  {"key": "age"}}
+                },
+                "from": "t",
+                "where": {">": [{"key":"age"}, 20]}
+            }));
+            assert_eq!(Ok(json!({"minAge": 28})), qry);
+        }
+
+        #[test]
+        fn select_min_max_age_where_age_gt_20() {
+            let qry = query(json!({
+                "select": {
+                    "youngestAge": {"min": {"key": "age"}},
+                    "oldestAge": {"max": {"key": "age"}},
+                },
+                "from": "t",
+                "where": {">": [{"key":"age"}, 20]}
+            }));
+            assert_eq!(Ok(json!({"youngestAge": 28, "oldestAge": 35})), qry);
+        }
+
+        #[test]
+        fn select_empty_obj() {
+            let qry = query(json!({
+                "select": {},
+                "from": "t",
+            }));
+            assert_eq!(
+                Ok(json!([
+                    {"name": "james", "age": 35},
+                    {"name": "ania", "age": 28, "job": "english teacher"},
+                    {"name": "misha", "age": 10},
+                    {"name": "ania", "age": 20},
+                ])),
+                qry
+            );
+        }
+
+        #[test]
+        fn select_empty_obj_where_age_gt_20() {
+            let qry = query(json!({
+                "select": {},
+                "from": "t",
+                "where": {">": [{"key":"age"}, 20]}
+            }));
+            assert_eq!(
+                Ok(json!([
+                    {"name": "james", "age": 35},
+                    {"name": "ania", "age": 28, "job": "english teacher"},
+                ])),
+                qry
+            );
+        }
+    */
+    /*
+        #[test]
+        fn select_age_by_name() {
+            let qry = query(json!({
+                "select": {
+                    "age": {"key": "age"},
+                },
+                "from": "t",
+                "by": {"key": "name"},
+            }));
+            assert_eq!(
+                Ok(json!({
+                    "misha": {"age": [10]},
+                    "ania": {"age": [28, 20]},
+                    "james": {"age":[35]},
+                })),
+                qry
+            );
+        }
+    */
+    /*
+        #[test]
+        fn select_first_age_by_name() {
+            let qry = query(json!({
+                "select": {
+                    "age": {"first": {"key": "age"}},
+                },
+                "from": "t",
+                "by": {"key": "name"},
+            }));
+            assert_eq!(
+                Ok(json!({
+                    "misha": {"age": 10},
+                    "ania": {"age": 28},
+                    "james": {"age": 35},
+                })),
+                qry
+            );
+        }
+    */
+    /*
+       #[test]
+       fn select_last_age_by_name() {
+           let qry = query(json!({
+               "select": {
+                   "age": {"last": {"key":"age"}},
+               },
+               "from": "t",
+               "by": {"key": "name"},
+           }));
+           assert_eq!(
+               Ok(json!({
+                   "misha":{"age": 10},
+                   "ania":{"age": 20},
+                   "james":{"age": 35},
+               })),
+               qry
+           );
+       }
+    */
+    /*
+        #[test]
+        fn select_count_age_by_name() {
+            let qry = query(json!({
+                "select": {
+                    "age": {"len": {"key": "age"}},
+                },
+                "from": "t",
+                "by": {"key": "name"},
+            }));
+            assert_eq!(
+                Ok(json!({
+                    "misha": {"age": 1},
+                    "ania": {"age": 2},
+                    "james": {"age": 1},
+                })),
+                qry
+            );
+        }
+    */
+    /*
+       #[test]
+       fn select_min_age_by_name() {
+           let qry = query(json!({
+               "select": {
+                   "age": {"min": {"key": "age"}},
+               },
+               "from": "t",
+               "by": {"key":"name"},
+           }));
+           assert_eq!(
+               Ok(json!({
+                   "misha":{"age": 10},
+                   "ania":{"age": 20},
+                   "james":{"age": 35},
+               })),
+               qry
+           );
+       }
+
+    */
+    /*
     #[test]
     fn select_max_age_by_name() {
         let qry = query(json!({
@@ -1254,28 +1251,29 @@ mod tests {
             })),
             qry
         );
-    }
-
-    #[test]
-    fn select_name_by_age() {
-        let qry = query(json!({
-            "select": {
-                "name": {"key": "name"},
-            },
-            "from": "t",
-            "by": {"key": "age"},
-        }));
-        assert_eq!(
-            Ok(json!({
-                "10": {"name": ["misha"]},
-                "20": {"name": ["ania"]},
-                "28": {"name": ["ania"]},
-                "35": {"name": ["james"]},
-            })),
-            qry
-        );
-    }
-
+    } */
+    /*
+       #[test]
+       fn select_name_by_age() {
+           let qry = query(json!({
+               "select": {
+                   "name": {"key": "name"},
+               },
+               "from": "t",
+               "by": {"key": "age"},
+           }));
+           assert_eq!(
+               Ok(json!({
+                   "10": {"name": ["misha"]},
+                   "20": {"name": ["ania"]},
+                   "28": {"name": ["ania"]},
+                   "35": {"name": ["james"]},
+               })),
+               qry
+           );
+       }
+    */
+    /*
     #[test]
     fn select_age_by_name_where_age_gt_20() {
         let qry = query(json!({
@@ -1293,8 +1291,9 @@ mod tests {
             })),
             qry
         );
-    }
+    } */
 
+    /*
     #[test]
     fn select_empty_keys_by_name() {
         let qry = query(json!({
@@ -1313,8 +1312,9 @@ mod tests {
             })),
             qry
         );
-    }
+    } */
 
+    /*
     #[test]
     fn select_age_job_by_name_where_age_gt_20() {
         let qry = query(json!({
@@ -1334,7 +1334,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_by_name_where_age_gt_20() {
         let qry = query(json!({
@@ -1350,7 +1352,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_count_max_min_age_by_name() {
         let qry = query(json!({
@@ -1371,7 +1375,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_sort_by_name() {
         let qry = query(json!({
@@ -1389,7 +1395,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_sort_by_qty() {
         let qry = query(json!({
@@ -1407,7 +1415,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_sort_by_time() {
         let qry = query(json!({
@@ -1425,7 +1435,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_sort_by_time_desc() {
         let qry = query(json!({
@@ -1444,7 +1456,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_sort_by_price() {
         let qry = query(json!({
@@ -1462,7 +1476,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_sort_by_discount() {
         let qry = query(json!({
@@ -1480,7 +1496,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_from_orders_where_key_eq_discount() {
         let qry = query(json!({
@@ -1495,7 +1513,9 @@ mod tests {
             qry
         );
     }
+    */
 
+    /*
     #[test]
     fn select_all_from_orders_where_qty_gt_2() {
         let qry = query(json!({
@@ -1510,6 +1530,7 @@ mod tests {
             qry
         );
     }
+    */
 
     #[test]
     fn eval_mul() {
@@ -1600,5 +1621,326 @@ mod tests {
         let cmd = eval(key("cmd"));
         let mut db = test_db();
         assert_eq!(Ok(json!(9)), eval_cmd(&mut db, cmd));
+    }
+}
+
+pub fn eval_upsert(db: &mut InMemDb, key: String, cmd: Cmd) -> Result<Json, Error> {
+    let val = db.eval(cmd)?;
+    match db.get_mut(&key) {
+        Ok(rval) => {
+            json_upsert(rval, val);
+            Ok(Json::Null)
+        }
+        Err(_) => match db.set(key, val) {
+            Some(val) => Ok(val),
+            None => Ok(Json::Null),
+        },
+    }
+}
+
+pub fn eval_oj(
+    db: &mut InMemDb,
+    lhs: Cmd,
+    lhs_key: &str,
+    rhs: Cmd,
+    rhs_key: &str,
+    key: &str,
+) -> Result<Json, Error> {
+    let lv = db.eval(lhs)?;
+    let rv = db.eval(rhs)?;
+    match (lv.as_array(), rv.as_array()) {
+        (Some(l), Some(r)) => Ok(json_outerjoin(l, lhs_key, r, rhs_key, key)),
+        _ => Err(Error::BadType),
+    }
+}
+
+pub fn eval_ij(
+    db: &mut InMemDb,
+    lhs: Cmd,
+    lhs_key: &str,
+    rhs: Cmd,
+    rhs_key: &str,
+    key: &str,
+) -> Result<Json, Error> {
+    let lv = db.eval(lhs)?;
+    let rv = db.eval(rhs)?;
+    match (lv.as_array(), rv.as_array()) {
+        (Some(l), Some(r)) => Ok(json_innerjoin(l, lhs_key, r, rhs_key, key)),
+        _ => Err(Error::BadType),
+    }
+}
+
+pub fn eval_max(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let val = db.eval(arg)?;
+    let max_val = json_max(&val);
+    let val: Json = if let Some(val) = max_val {
+        val.clone()
+    } else {
+        Json::Null
+    };
+    Ok(val)
+}
+
+pub fn eval_min(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let val = db.eval(arg)?;
+    let min_val = json_min(&val);
+    let val = if let Some(val) = min_val {
+        val.clone()
+    } else {
+        Json::Null
+    };
+    Ok(val)
+}
+
+// evaluate binary function (a fn with 2 args)
+pub fn eval_bin_fn(
+    db: &mut InMemDb,
+    lhs: Cmd,
+    rhs: Cmd,
+    f: &dyn Fn(&Json, &Json) -> Result<Json, Error>,
+) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    f(&x, &y)
+}
+
+/// evaluate unary function (a fn with 1 arg)
+
+pub fn eval_nested_key(val: Json, keys: &[&str]) -> Option<Json> {
+    let mut opt_val = Some(val);
+    for key in keys {
+        if let Some(v) = opt_val {
+            println!("v={:?}\nkey={:?}", v, key);
+            opt_val = eval_key(&v, key)
+        } else {
+            return None;
+        }
+    }
+    opt_val
+}
+
+/// evaluate the key command
+pub fn eval_keys(db: &InMemDb, keys: &[&str]) -> Option<Json> {
+    let key = keys[0];
+    let val = db.key(key)?;
+    eval_nested_key(val.clone(), &keys[1..])
+}
+
+fn eval_key(val: &Json, key: &str) -> Option<Json> {
+    match val {
+        Json::Array(arr) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for val in arr {
+                let v: Json = val.get(key).cloned().unwrap_or(Json::Null);
+                out.push(v);
+            }
+            Some(Json::from(out))
+        }
+        val => val.get(key).cloned(),
+    }
+}
+
+pub fn eval_append(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
+    let elem = db.eval(arg)?;
+    let val = db.get_mut(key)?;
+    json_append(val, elem);
+    Ok(Json::Null)
+}
+
+/// evaluate the sort command
+pub fn eval_sort_cmd(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let mut val: Json = db.eval(arg)?;
+    json_sort(&mut val, false);
+    Ok(val)
+}
+
+/// evaluate the insert command
+pub fn eval_insert(db: &mut InMemDb, key: &str, arg: Vec<JsonObj>) -> Result<Json, Error> {
+    let val = db.get_mut(key)?;
+    let n = arg.len();
+    json_insert(val, arg);
+    Ok(Json::from(n))
+}
+
+pub fn eval_push(db: &mut InMemDb, key: &str, arg: Cmd) -> Result<Json, Error> {
+    let val: Json = db.eval(arg)?;
+    let kv = db.get_mut(key)?;
+    json_push(kv, val);
+    Ok(Json::Null)
+}
+
+pub fn eval_reverse(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let mut val: Json = db.eval(arg)?;
+    json_reverse(&mut val);
+    Ok(val)
+}
+
+pub fn eval_map(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Json, Error> {
+    let val = db.eval(arg)?;
+    json_map(&val, key)
+}
+
+pub fn eval_flat(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let val = db.eval(arg)?;
+    let val: Json = json_flat(&val);
+    Ok(val)
+}
+
+pub fn eval_numsort(db: &mut InMemDb, arg: Cmd, descend: bool) -> Result<Json, Error> {
+    let val: Json = db.eval(arg)?;
+    Ok(json_numsort(val, descend))
+}
+
+pub fn eval_median(db: &mut InMemDb, arg: Cmd) -> Result<Json, Error> {
+    let val = db.eval(arg)?;
+    json_median(&val)
+}
+
+pub fn eval_sortby(db: &mut InMemDb, arg: Cmd, key: String) -> Result<Json, Error> {
+    let mut val: Json = db.eval(arg)?;
+    json_sortby(&mut val, &key);
+    Ok(val)
+}
+
+pub fn eval_eq(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let lhs = db.eval(lhs)?;
+    let rhs = db.eval(rhs)?;
+    Ok(json_eq(&lhs, &rhs))
+}
+
+pub fn eval_not_eq(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    Ok(json_not_eq(&x, &y))
+}
+
+pub fn eval_lt(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    Ok(json_lt(&x, &y))
+}
+
+pub fn eval_gt(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    Ok(json_gt(&x, &y))
+}
+
+pub fn eval_lte(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    let val = json_lte(&x, &y);
+    Ok(val)
+}
+
+pub fn eval_gte(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    let val: Json = json_gte(&x, &y);
+    Ok(val)
+}
+
+pub fn eval_and(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    let val = json_lte(&x, &y);
+    Ok(val)
+}
+
+pub fn eval_or(db: &mut InMemDb, lhs: Cmd, rhs: Cmd) -> Result<Json, Error> {
+    let x = db.eval(lhs)?;
+    let y = db.eval(rhs)?;
+    let val = json_gte(&x, &y);
+    Ok(val)
+}
+
+#[cfg(test)]
+mod evaltests {
+    use super::*;
+
+    use serde_json::json;
+
+    #[test]
+    pub fn eval_in() {
+        let mut db = InMemDb::new();
+        db.set("nums".to_string(), json!([1, 2, 3, 4, 5]));
+        let cmd = Cmd::In(
+            Box::new(Cmd::Key("nums".to_string())),
+            Box::new(Cmd::Json(json!(3))),
+        );
+        assert_eq!(Ok(json!([false, false, true, false, false])), db.eval(cmd));
+    }
+
+    #[test]
+    fn test_eval_nested_key() {
+        let _it = "address.line1".split('.');
+        let val = json!({"a": 1});
+        assert_eq!(None, eval_nested_key(val, &["b"]));
+
+        let val = json!({"orders": [1,2,3,4,5]});
+        assert_eq!(
+            Some(json!([1, 2, 3, 4, 5])),
+            eval_nested_key(val, &["orders"])
+        );
+
+        let val = json!({"orders": [
+            {"qty": 1},
+            {"qty": 2},
+            {"qty": 3},
+            {"qty": 4},
+            {"qty": 5},
+        ]});
+        assert_eq!(
+            Some(json!([1, 2, 3, 4, 5])),
+            eval_nested_key(val, &["orders", "qty"])
+        );
+
+        let val = json!({"orders": [
+            {"customer": {"name": "alice"}},
+            {"customer": {"name": "bob"}},
+            {"customer": {"name": "charles"}},
+            {"customer": {"name": "dave"}},
+            {"customer": {"name": "ewa"}},
+            {"customer": {"surname": "perry"}},
+            {"foo": {"bar": "baz"}},
+        ]});
+        assert_eq!(
+            Some(json!([
+                "alice",
+                "bob",
+                "charles",
+                "dave",
+                "ewa",
+                Json::Null,
+                Json::Null
+            ])),
+            eval_nested_key(val, &["orders", "customer", "name"])
+        );
+    }
+
+    #[test]
+    fn test_eval_ij() {
+        let mut db = InMemDb::new();
+        db.set("a", json!([{"a": 1}, {"a": 2}, {"a": 3}]));
+        db.set("b", json!([{"b": 1}, {"b": 2}]));
+        let lhs = Cmd::Key("a".to_string());
+        let rhs = Cmd::Key("b".to_string());
+        assert_eq!(
+            Ok(json!([{"a": 1, "c": {"b": 1}}, {"a": 2, "c": {"b": 2}}])),
+            eval_ij(&mut db, lhs, "a", rhs, "b", "c")
+        );
+    }
+
+    #[test]
+    fn test_eval_oj() {
+        let mut db = InMemDb::new();
+        db.set("a", json!([{"a": 1}, {"a": 2}, {"a": 3}]));
+        db.set("b", json!([{"b": 1}, {"b": 2}]));
+        let lhs = Cmd::Key("a".to_string());
+        let rhs = Cmd::Key("b".to_string());
+        assert_eq!(
+            Ok(json!([{"a": 1, "c": {"b": 1}}, {"a": 2, "c": {"b": 2}}, {"a": 3}])),
+            eval_oj(&mut db, lhs, "a", rhs, "b", "c")
+        );
     }
 }

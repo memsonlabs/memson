@@ -1,16 +1,9 @@
-use crate::apply::apply_rows;
-use crate::cmd::{Cmd, QueryCmd};
+use crate::cmd::Cmd;
 use crate::err::Error;
-use crate::eval::*;
 use crate::inmem::InMemDb;
-use crate::json::*;
 use crate::ondisk::OnDiskDb;
-use rayon::prelude::*;
-use serde_json::{Value as Json, Value};
-use std::collections::HashMap;
+use serde_json::Value as Json;
 use std::path::Path;
-
-pub(crate) const PAGE_SIZE: usize = 50;
 
 pub struct Memson {
     pub inmem_db: InMemDb,
@@ -18,7 +11,7 @@ pub struct Memson {
 }
 
 impl Memson {
-    pub fn open<P:AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let disk_db = OnDiskDb::open(path)?;
         let inmem_db = InMemDb::load(&disk_db)?;
         Ok(Self { inmem_db, disk_db })
@@ -27,211 +20,14 @@ impl Memson {
     pub fn eval(&mut self, cmd: Cmd) -> Result<Json, Error> {
         match cmd {
             Cmd::Set(key, val) => self.set(key, *val),
-            cmd => self.inmem_db.eval(cmd)
-        }        
+            cmd => self.inmem_db.eval(cmd),
+        }
     }
 
     fn set(&mut self, key: String, cmd: Cmd) -> Result<Json, Error> {
         let val = self.inmem_db.eval(cmd)?;
         self.disk_db.set(&key, &val)?;
         Ok(self.inmem_db.set(key, val).unwrap_or(Json::Null))
-    }
-}
-
-pub struct Query<'a> {
-    pub(crate) db: &'a InMemDb,
-    pub(crate) cmd: QueryCmd,
-}
-
-/// Represents rows from a table from memson
-/// Avoids doing a deep copy
-enum Rows<'a> {
-    Val(Vec<Json>),
-    Ref(&'a [Json]),
-}
-
-impl<'a> Rows<'a> {
-    /// slice of rows
-    fn as_slice(&self) -> &[Json] {
-        match self {
-            Rows::Val(vec) => vec.as_slice(),
-            Rows::Ref(slice) => slice,
-        }
-    }
-}
-
-/// merge two groupby maps together. if key exists in both then the array are merged together.
-fn merge_grouping(
-    mut x: HashMap<String, Vec<Json>>,
-    y: HashMap<String, Vec<Json>>,
-) -> HashMap<String, Vec<Json>> {
-    for (key, val) in y {
-        let vals = x.entry(key).or_insert_with(Vec::new);
-        vals.extend(val);
-    }
-    x
-}
-
-/// evaluation of sort by
-fn eval_sortby(rows: &[Json], key: &str, descend: bool) -> Vec<Json> {
-    let mut r = rows.to_vec();
-    if descend {
-        r.par_sort_by(|x, y| sortby_desc_key(key, x, y));
-    } else {
-        r.par_sort_by(|x, y| sortby_key(key, x, y));
-    }
-    r
-}
-
-impl<'a> Query<'a> {
-    /// Create query from a reference to the key/value cache and query command
-    pub fn from(db: &'a InMemDb, cmd: QueryCmd) -> Self {
-        Self { db, cmd }
-    }
-
-    /// executes the query
-    pub fn exec(&self) -> Result<Json, Error> {
-        let rows = self.eval_rows()?;
-        if let Some(by) = &self.cmd.by {
-            self.eval_grouped_selects(by.as_ref(), rows)
-        } else {
-            self.eval_select(rows)
-        }
-    }
-
-    /// evaluate the rows to query against
-    fn eval_rows(&self) -> Result<Rows, Error> {
-        let rows = self.eval_db_rows()?;
-        let descend = self.descend();
-        let rows = match (&self.cmd.filter, &self.cmd.sort) {
-            (Some(filter), Some(key)) => {
-                let cmd = Cmd::parse(filter.clone())?;
-                let rows = self.eval_where(rows, &cmd)?;
-                Rows::Val(eval_sortby(&rows, key, descend))
-            }
-            (Some(filter), None) => {
-                let cmd = Cmd::parse(filter.clone())?;
-                Rows::Val(self.eval_where(rows, &cmd)?)
-            }
-            (None, Some(key)) => Rows::Val(eval_sortby(rows, key, descend)),
-            (None, None) => Rows::Ref(rows),
-        };
-        Ok(rows)
-    }
-
-    /// check if the sort order is descending
-    fn descend(&self) -> bool {
-        self.cmd.descend.unwrap_or(false)
-    }
-
-    /// evaulate the grouped selects
-    fn eval_grouped_selects(&self, by: &Cmd, rows: Rows) -> Result<Json, Error> {
-        let grouping = self.eval_grouping(by, rows.as_slice())?;
-        if let Some(selects) = &self.cmd.selects {
-            self.eval_grouped_select(grouping, selects)
-        } else {
-            let mut obj = JsonObj::new();
-            for (k, v) in grouping {
-                obj.insert(k, v.into_iter().map(Json::from).collect());
-            }
-            Ok(Json::from(obj))
-        }
-    }
-
-    /// evaulate the commands by grouped json values
-    fn eval_grouped_select(
-        &self,
-        grouping: HashMap<String, Vec<Json>>,
-        selects: &HashMap<String, Cmd>,
-    ) -> Result<Json, Error> {
-        let mut keyed_obj = JsonObj::new();
-        for (key, keyed_rows) in grouping {
-            let mut obj = JsonObj::new();
-            let keyed_val = Json::Array(keyed_rows);
-            for (col, cmd) in selects {
-                if let Some(v) = eval_rows_cmd(cmd.clone(), &keyed_val) {
-                    obj.insert(col.to_string(), v);
-                }
-            }
-            keyed_obj.insert(key, Json::Object(obj));
-        }
-        Ok(Json::from(keyed_obj))
-    }
-
-    /// evaulate the group by statements
-    // TODO(jaupe) refactor to change val type to Json from Vec<Json>
-    fn eval_grouping(&self, by: &Cmd, rows: &[Json]) -> Result<HashMap<String, Vec<Json>>, Error> {
-        match by {
-            Cmd::Key(key) => {
-                let g: HashMap<String, Vec<Value>> = rows
-                    .par_iter()
-                    .map(|row| (row, row.get(key)))
-                    .filter(|(_, x)| x.is_some())
-                    .map(|(row, x)| (row, x.unwrap()))
-                    .fold(HashMap::new, |mut g, (row, val)| {
-                        let entry: &mut Vec<Json> = g.entry(json_str(val)).or_insert_with(Vec::new);
-                        entry.push(row.clone());
-                        g
-                    })
-                    .reduce(HashMap::new, merge_grouping);
-                Ok(g)
-            }
-            _ => Err(Error::BadGroupBy),
-        }
-    }
-
-    /// evaulate the rows from the memson cache
-    fn eval_db_rows(&'a self) -> Result<&'a [Value], Error> {
-        let val = self.db.get(&self.cmd.from)?;
-        val.as_array()
-            .map(|x| x.as_slice())
-            .ok_or(Error::ExpectedArr)
-    }
-
-    /// evaulate the where statement
-    fn eval_where(&self, rows: &[Json], filter: &Cmd) -> Result<Vec<Json>, Error> {
-        let mut filtered_rows = Vec::new();
-        for row in rows {
-            if let Some(obj) = row.as_object() {
-                if let Some(true) = eval_filter(filter.clone(), row) {
-                    filtered_rows.push(Json::from(obj.clone()));
-                }
-            }
-        }
-        Ok(filtered_rows)
-    }
-
-    // TODO remove cloning
-    /// evaluate the select statements
-    fn eval_select(&self, rows: Rows) -> Result<Json, Error> {
-        match &self.cmd.selects {
-            Some(selects) => self.eval_obj_selects(selects, rows),
-            None => self.eval_select_all(rows.as_slice()),
-        }
-    }
-
-    /// evaluate select statements when structured as a json object
-    fn eval_obj_selects(&self, selects: &HashMap<String, Cmd>, rows: Rows) -> Result<Json, Error> {
-        if selects.is_empty() {
-            return self.eval_select_all(rows.as_slice());
-        }
-        //todo the cmds vec is not neccessary
-        let mut projections = Map::new();
-        for (name, select) in selects {
-            let val = apply_rows(select.clone(), rows.as_slice())?;
-            projections.insert(name.to_string(), val);
-        }
-        Ok(Json::Object(projections))
-    }
-
-    //TODO paginate
-    /// evaluate select query without any select statements
-    fn eval_select_all(&self, rows: &[Json]) -> Result<Json, Error> {
-        let mut output = Vec::new();
-        for row in rows.iter().take(50).cloned() {
-            output.push(row);
-        }
-        Ok(Json::from(output))
     }
 }
 
@@ -366,6 +162,7 @@ mod tests {
         fs::remove_dir_all(path).unwrap();
     }
 
+    /*
     #[test]
     fn select_all_from_orders() {
         let exp = json!([
@@ -610,6 +407,7 @@ mod tests {
             Ok(exp)
         );
     }
+    */
 
     #[test]
     fn test_first() {
@@ -899,18 +697,13 @@ mod tests {
         db
     }
 
-    fn query(json: Json) -> Result<Json, Error> {
-        let qry_cmd = serde_json::from_value(json).unwrap();
-        let db = test_db();
-        let qry = Query::from(&db, qry_cmd);
-        qry.exec()
-    }
-
+    /*
     #[test]
     fn select_all_query() {
         let qry = query(json!({"from": "t"}));
         assert_eq!(Ok(table_data()), qry);
     }
+    */
 
     fn table_data() -> Json {
         json!([
@@ -921,6 +714,7 @@ mod tests {
         ])
     }
 
+    /*
     #[test]
     fn select_1_prop_query() {
         let qry = query(json!({"select": {"name": {"key": "name"}}, "from": "t"}));
@@ -1586,7 +1380,9 @@ mod tests {
         assert_eq!(bad_type(), eval(&mut db, mul(key("i"), key("s"))));
         assert_eq!(bad_type(), eval(&mut db, mul(key("s"), key("i"))));
     }
+    */
 
+    /*
     #[test]
     fn eval_sortby_ok() {
         let rows = json!([
@@ -1663,7 +1459,9 @@ mod tests {
             Json::Array(eval_sortby(val.as_array().unwrap(), "discount", false))
         );
     }
+    */
 
+    /*
     #[test]
     fn eval_filter_ok() {
         let cmd = Cmd::Gt(
@@ -1672,6 +1470,7 @@ mod tests {
         );
         assert_eq!(Some(true), eval_filter(cmd, &json!({"age": 3})));
     }
+    */
 
     #[test]
     fn eval_map_ok() {
@@ -1726,10 +1525,11 @@ mod tests {
     #[test]
     fn test_persistence() {
         let path = "memson";
-        let (key, val) = ("a", json!([1,2,3,4,5]));
+        let (key, val) = ("a", json!([1, 2, 3, 4, 5]));
         {
             let mut db = Memson::open(path).unwrap();
-            db.eval(Cmd::Set(key.to_string(), Box::new(Cmd::Json(val.clone())))).unwrap();
+            db.eval(Cmd::Set(key.to_string(), Box::new(Cmd::Json(val.clone()))))
+                .unwrap();
         }
         {
             let mut db = Memson::open(path).unwrap();

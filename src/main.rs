@@ -1,14 +1,12 @@
 #![forbid(unsafe_code)]
 
-pub mod apply;
 pub mod cmd;
 pub mod db;
 pub mod err;
-pub mod eval;
 pub mod inmem;
 pub mod json;
 pub mod ondisk;
-pub mod query;
+//pub mod query;
 
 use crate::cmd::Cmd;
 use crate::db::Memson;
@@ -44,10 +42,7 @@ async fn web_query(data: web::Data<AppState>, req_body: Json<Cmd>) -> impl Respo
         Ok(db) => db,
         Err(_) => return Err(Error::BadIO),
     };
-    match db.eval(cmd) {
-        Ok(val) => Ok(Json(val)),
-        Err(err) => return Err(err),
-    }
+    db.eval(cmd).map(Json)
 }
 
 #[actix_web::main]

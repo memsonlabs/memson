@@ -16,12 +16,6 @@ pub struct QueryCmd {
     pub descend: Option<bool>,
 }
 
-impl QueryCmd {
-    fn parse(json: Json) -> Result<Self, Error> {
-        serde_json::from_value(json).map_err(|_| Error::Serialize)
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Range {
     pub start: Option<usize>,
@@ -42,8 +36,6 @@ pub enum Cmd {
     And(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "append")]
     Append(String, Box<Cmd>),
-    #[serde(rename = "apply")]
-    Apply(Box<Cmd>, Box<Cmd>),
     #[serde(rename = "avg")]
     Avg(Box<Cmd>),
     #[serde(rename = "bar")]
@@ -112,8 +104,6 @@ pub enum Cmd {
     Push(String, Box<Cmd>),
     #[serde(rename = "pop")]
     Pop(String),
-    #[serde(rename = "query")]
-    Query(QueryCmd),
     #[serde(rename = "reverse")]
     Reverse(Box<Cmd>),
     #[serde(rename = "set")]
@@ -134,6 +124,8 @@ pub enum Cmd {
     ToString(Box<Cmd>),
     #[serde(rename = "unique")]
     Unique(Box<Cmd>),
+    #[serde(rename = "upsert")]
+    Upsert(String, Box<Cmd>),
     #[serde(rename = "var")]
     Var(Box<Cmd>),
 }
@@ -272,10 +264,6 @@ impl Cmd {
                         "*" | "mul" => parse_bin_fn(val, Cmd::Mul),
                         "pop" => parse_unr_str_fn(val, Cmd::Pop),
                         "push" => parse_b_str_fn(val, Cmd::Push),
-                        "query" => {
-                            let qry_cmd = QueryCmd::parse(val)?;
-                            Ok(Cmd::Query(qry_cmd))
-                        }
                         "set" => parse_b_str_fn(val, Cmd::Set),
                         "sub" | "-" => parse_bin_fn(val, Cmd::Sub),
                         "sum" => parse_unr_fn(val, Cmd::Sum),

@@ -9,73 +9,6 @@ use std::mem;
 pub type Json = serde_json::Value;
 pub type JsonObj = Map<String, Json>;
 pub type JsonNum = serde_json::Number;
-/*
-#[derive(Debug, Serialize, Eq, PartialEq)]
-pub enum JsonVal {
-    Box(Arc<Json>),
-    Val(Json),
-}
-
-impl <'a> JsonVal<'a> {
-    pub fn val<J:Into<Json>>(val: J) -> JsonVal<'a> {
-        Arc::new(val.into())
-    }
-
-    fn as_bool(&self) -> Option<bool> {
-        match self {
-            Arc::new(Json::Bool(val)) => Some(*val),
-            JsonVal::Ref(Json::Bool(val)) => Some(*val),
-            _ => None,
-        }
-    }
-
-    pub fn reff(&'a self) -> &'a Json {
-        match self {
-            Arc::new(ref val) => val,
-            JsonVal::Ref(val) => *val,
-            _ => unimplemented!(),
-        }
-    }
-}
-
-impl From<JsonVal<'_>> for Json {
-    fn from(val: JsonVal<'_>) -> Json {
-        match val {
-            Arc::new(val) => val,
-            JsonVal::Ref(val) => val.clone(),
-        }
-    }
-}
-
-impl From<&JsonVal<'_>> for Json {
-    fn from(val: &JsonVal<'_>) -> Json {
-        match val {
-            Arc::new(val) => val.clone(),
-            JsonVal::Ref(val) => (*val).clone(),
-            JsonVal::Slice(s) => Json::from(s.to_owned()),
-        }
-    }
-}
-
-
-impl AsRef<Json> for JsonVal<'_> {
-    fn as_ref(&self) -> &Json {
-        match self {
-            JsonVal::Ref(v) => v,
-            Arc::new(v) => v,
-        }
-    }
-}
-
-impl AsMut<Json> for JsonVal<'_> {
-    fn as_mut(&mut self) -> &mut Json {
-        match self {
-            JsonVal::Ref(_) => unimplemented!(),
-            Arc::new(v) => v,
-            JsonVal::Slice(_) => unimplemented!(),
-        }
-    }
-} */
 
 // wrapper around json_count to return as a Result
 pub fn count(val: &Json) -> Result<Json, Error> {
@@ -85,6 +18,14 @@ pub fn count(val: &Json) -> Result<Json, Error> {
 // wrapper around json_unqiue to return as Result
 pub fn unique(val: &Json) -> Result<Json, Error> {
     Ok(json_unique(val))
+}
+
+pub fn json_upsert(lhs: &mut Json, rhs: Json) {
+    if let Json::Array(ref mut arr) = lhs {
+        arr.push(rhs);
+    } else {
+        *lhs = json!([lhs.clone(), rhs]);
+    }
 }
 
 /// Vectorized equality test between two json values. Returns back a json value of a boolean or an array of booleans depending
@@ -1147,12 +1088,10 @@ pub fn json_innerjoin(lhs: &[Json], lhs_key: &str, rhs: &[Json], rhs_key: &str, 
     Json::from(out)
 }
 
-
-
 pub fn json_outerjoin(lhs: &[Json], lhs_key: &str, rhs: &[Json], rhs_key: &str, key: &str) -> Json {
     let mut out = Vec::new();
     for l in lhs {
-        if !l.is_object(){
+        if !l.is_object() {
             continue;
         }
         let l_val = match l.get(lhs_key) {
@@ -1175,7 +1114,6 @@ pub fn json_outerjoin(lhs: &[Json], lhs_key: &str, rhs: &[Json], rhs_key: &str, 
             }
         }
         out.push(Json::from(l_obj));
-
     }
     Json::Array(out)
 }
@@ -1257,40 +1195,92 @@ mod tests {
     fn test_json_innerjoin() {
         let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
         let rhs = json!([{"b": 1}, {"b": 2}, {"b": 3}, {"b": 4}]);
-        assert_eq!(json!([
-            {"a": 1, "c": {"b": 1}},
-            {"a": 2, "c": {"b": 2}},
-            {"a": 3, "c": {"b": 3}},
-            {"a": 4, "c": {"b": 4}}
-        ]), json_innerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c"));
+        assert_eq!(
+            json!([
+                {"a": 1, "c": {"b": 1}},
+                {"a": 2, "c": {"b": 2}},
+                {"a": 3, "c": {"b": 3}},
+                {"a": 4, "c": {"b": 4}}
+            ]),
+            json_innerjoin(
+                lhs.as_array().unwrap(),
+                "a",
+                rhs.as_array().unwrap(),
+                "b",
+                "c"
+            )
+        );
 
         let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
         let rhs = json!([{"b": 6}, {"b": 7}, {"b": 8}, {"b": 9}]);
-        assert_eq!(json!([]), json_innerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c")); 
-        
+        assert_eq!(
+            json!([]),
+            json_innerjoin(
+                lhs.as_array().unwrap(),
+                "a",
+                rhs.as_array().unwrap(),
+                "b",
+                "c"
+            )
+        );
         let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
         let rhs = json!([]);
-        assert_eq!(json!([]), json_innerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c")); 
-    } 
-    
+        assert_eq!(
+            json!([]),
+            json_innerjoin(
+                lhs.as_array().unwrap(),
+                "a",
+                rhs.as_array().unwrap(),
+                "b",
+                "c"
+            )
+        );
+    }
     #[test]
     fn test_json_outerjoin() {
         let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
         let rhs = json!([{"b": 1}, {"b": 2}, {"b": 3}, {"b": 4}]);
-        assert_eq!(json!([
-            {"a": 1, "c": {"b": 1}},
-            {"a": 2, "c": {"b": 2}},
-            {"a": 3, "c": {"b": 3}},
-            {"a": 4, "c": {"b": 4}},
-            {"a": 5}
-        ]), json_outerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c"));
+        assert_eq!(
+            json!([
+                {"a": 1, "c": {"b": 1}},
+                {"a": 2, "c": {"b": 2}},
+                {"a": 3, "c": {"b": 3}},
+                {"a": 4, "c": {"b": 4}},
+                {"a": 5}
+            ]),
+            json_outerjoin(
+                lhs.as_array().unwrap(),
+                "a",
+                rhs.as_array().unwrap(),
+                "b",
+                "c"
+            )
+        );
 
         let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
         let rhs = json!([{"b": 6}, {"b": 7}, {"b": 8}, {"b": 9}]);
-        assert_eq!(json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]), json_outerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c"));        
+        assert_eq!(
+            json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]),
+            json_outerjoin(
+                lhs.as_array().unwrap(),
+                "a",
+                rhs.as_array().unwrap(),
+                "b",
+                "c"
+            )
+        );
 
         let lhs = json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]);
         let rhs = json!([]);
-        assert_eq!(json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]), json_outerjoin(lhs.as_array().unwrap(), "a", rhs.as_array().unwrap(), "b", "c"));        
-    }     
+        assert_eq!(
+            json!([{"a": 1}, {"a": 2}, {"a": 3}, {"a": 4}, {"a": 5}]),
+            json_outerjoin(
+                lhs.as_array().unwrap(),
+                "a",
+                rhs.as_array().unwrap(),
+                "b",
+                "c"
+            )
+        );
+    }
 }
